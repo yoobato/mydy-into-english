@@ -303,9 +303,12 @@ final class StudyStore: ObservableObject {
         didSet { UserDefaults.standard.set(effort.rawValue, forKey: "reasoning.effort") }
     }
     @Published private(set) var activeIDs: [LearningMode: UUID] = [:]
-    @Published private(set) var isSending = false
-    @Published private(set) var sendingMode: LearningMode?
+    @Published private(set) var sendingModes: Set<LearningMode> = []
+    @Published private(set) var responseErrors: [LearningMode: String] = [:]
     @Published var error: String?
+    var isSending: Bool { !sendingModes.isEmpty }
+    func isSending(in mode: LearningMode) -> Bool { sendingModes.contains(mode) }
+    var currentError: String? { responseErrors[mode] ?? error }
     private var archiveURL: URL?
     private var account: String?
     private let api: PlanAPI
@@ -321,7 +324,7 @@ final class StudyStore: ObservableObject {
         for mode in LearningMode.allCases { refreshExamples(for: mode) }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-testing"),
-           ProcessInfo.processInfo.arguments.contains("--ui-testing-waiting") { isSending = true; sendingMode = .sentence }
+           ProcessInfo.processInfo.arguments.contains("--ui-testing-waiting") { sendingModes = [.sentence] }
         #endif
     }
     func refreshExamples(for mode: LearningMode) {
@@ -338,7 +341,7 @@ final class StudyStore: ObservableObject {
 
     func switchAccount(_ subject: String?) {
         guard account != subject else { return }
-        account = subject; archive = StudyArchive(); activeIDs = [:]; archiveURL = nil; error = nil
+        account = subject; archive = StudyArchive(); activeIDs = [:]; archiveURL = nil; error = nil; responseErrors = [:]
         guard let subject else { return }
         do {
             let root = try directory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -371,14 +374,16 @@ final class StudyStore: ObservableObject {
         }
         return StudyRequest(mode: mode, mood: mood, history: history, region: region)
     }
+    func reportInputError(_ message: String, in mode: LearningMode) { responseErrors[mode] = message }
     func newChat() {
-        guard !isSending else { return }
-        activeIDs[mode] = nil; error = nil; refreshExamples(for: mode)
+        guard !isSending(in: mode) else { return }
+        activeIDs[mode] = nil; error = nil; responseErrors[mode] = nil; refreshExamples(for: mode)
     }
-    func open(_ chat: StudyChat) { guard !isSending else { return }; mode = chat.mode; activeIDs[chat.mode] = chat.id; error = nil }
+    func open(_ chat: StudyChat) { guard !isSending(in: chat.mode) else { return }; mode = chat.mode; activeIDs[chat.mode] = chat.id; error = nil; responseErrors[chat.mode] = nil }
     func deleteChat(_ id: UUID) { deleteChats([id]) }
     private func deleteChats(_ ids: Set<UUID>) {
-        guard !isSending, !ids.isEmpty, archive.chats.contains(where: { ids.contains($0.id) }) else { return }
+        guard !ids.isEmpty, archive.chats.contains(where: { ids.contains($0.id) }),
+              !archive.chats.contains(where: { ids.contains($0.id) && isSending(in: $0.mode) }) else { return }
         var updated = archive
         updated.chats.removeAll { ids.contains($0.id) }
         // A request preview may contain the removed conversation; never retain that copy.
@@ -415,19 +420,20 @@ final class StudyStore: ObservableObject {
             archive = updated; error = nil
         } catch { self.error = "저장한 표현을 삭제하지 못했어요. 다시 시도해 주세요." }
     }
-    func send(text: String, korean: String, auth: ProbeModel, retry: Bool = false) async {
-        guard !isSending, !auth.busy, let subject = auth.credentials?.subject else { return }
+    func send(text: String, korean: String, auth: ProbeModel, retry: Bool = false, in requestedMode: LearningMode? = nil, mood requestedMood: WritingMood? = nil) async {
+        let mode = requestedMode ?? self.mode
+        guard !isSending(in: mode), !auth.busy, let subject = auth.credentials?.subject else { return }
         var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var korean = korean.trimmingCharacters(in: .whitespacesAndNewlines)
         if mode == .sentence, text.isEmpty, !korean.isEmpty { text = korean; korean = "" }
         guard retry || !text.isEmpty else { return }
-        guard text.count <= 2000, korean.count <= 2000 else { error = "2,000자 이내로 적어 주세요."; return }
-        let requestMode = mode, requestMood = mood
-        error = nil; isSending = true; sendingMode = requestMode
-        defer { isSending = false; sendingMode = nil }
+        guard text.count <= 2000, korean.count <= 2000 else { responseErrors[mode] = "2,000자 이내로 적어 주세요."; return }
+        let requestMode = mode, requestMood = requestedMood ?? mood
+        responseErrors[requestMode] = nil; sendingModes.insert(requestMode)
+        defer { sendingModes.remove(requestMode) }
         let chatID: UUID
-        if let existing = activeIDs[mode] { chatID = existing }
-        else { let chat = StudyChat(mode: mode); chatID = chat.id; archive.chats.insert(chat, at: 0); activeIDs[mode] = chat.id }
+        if let existing = activeIDs[requestMode] { chatID = existing }
+        else { let chat = StudyChat(mode: requestMode); chatID = chat.id; archive.chats.insert(chat, at: 0); activeIDs[requestMode] = chat.id }
         guard let index = archive.chats.firstIndex(where: { $0.id == chatID }) else { return }
         if !retry {
             archive.chats[index].messages.append(StudyMessage(text: text, korean: requestMode == .sentence ? korean : "", mood: requestMood))
@@ -451,7 +457,10 @@ final class StudyStore: ObservableObject {
             guard account == subject, let target = archive.chats.firstIndex(where: { $0.id == chatID }) else { return }
             archive.chats[target].messages.append(StudyMessage(text: "", reply: reply, mood: requestMood, model: snapshot.model))
             archive.chats[target].updatedAt = Date(); save()
-        } catch is CancellationError { error = "요청이 중단됐어요. 다시 시도할 수 있어요." }
-        catch { self.error = error.localizedDescription }
+        } catch is CancellationError {
+            if account == subject { responseErrors[requestMode] = "요청이 중단됐어요. 다시 시도할 수 있어요." }
+        } catch {
+            if account == subject { responseErrors[requestMode] = error.localizedDescription }
+        }
     }
 }

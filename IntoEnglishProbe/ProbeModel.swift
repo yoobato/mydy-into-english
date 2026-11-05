@@ -29,6 +29,7 @@ final class ProbeModel: ObservableObject {
     private var pending: PendingLogin?
     private let listener = LoopbackListener()
     private let api: PlanAPI
+    private var credentialRefresh: Task<Credentials, Error>?
     @Published private(set) var registrations: [AccountRegistration] = []
     var rememberedRegistration: AccountRegistration? { registrations.last }
 
@@ -132,21 +133,31 @@ final class ProbeModel: ObservableObject {
         pending = nil; listener.stop(); browser = nil; busy = false
     }
     func activeCredential() async throws -> Credentials {
+        if let credentialRefresh { return try await credentialRefresh.value }
         guard let current = credentials else { throw ProbeError("먼저 ChatGPT 계정을 연결해 주세요.") }
         guard current.permitsInference else { throw ProbeError("ChatGPT 요금제 사용 권한이 필요해요.") }
         guard current.expiresAt <= Date().addingTimeInterval(60) else { return current }
         guard let refresh = current.refreshToken else { throw ProbeError("세션이 만료되었어요. 다시 로그인해 주세요.") }
-        let updated = try await api.token(["grant_type": "refresh_token", "client_id": current.clientID,
-            "refresh_token": refresh, "resource": "https://api.openai.com/v1"])
-        let replacement = Credentials(clientID: current.clientID, subject: current.subject, email: current.email,
-            accessToken: updated.access_token, refreshToken: updated.refresh_token ?? current.refreshToken,
-            idToken: current.idToken,
-            scopes: updated.scope.map { $0.split(separator: " ").map(String.init) } ?? current.scopes,
-            expiresAt: Date().addingTimeInterval(updated.expires_in))
-        try Vault.save(replacement, key: "account")
-        credentials = replacement
-        guard replacement.permitsInference else { throw ProbeError("세션 갱신 후 요금제 사용 권한이 없어 요청을 멈췄어요.") }
-        return replacement
+        // A rotating refresh token must be exchanged once even when both tabs request together.
+        let task = Task { @MainActor in
+            let updated = try await self.api.token(["grant_type": "refresh_token", "client_id": current.clientID,
+                "refresh_token": refresh, "resource": "https://api.openai.com/v1"])
+            guard self.credentials?.subject == current.subject, self.credentials?.clientID == current.clientID else {
+                throw ProbeError("계정이 변경되어 세션 갱신을 멈췄어요.")
+            }
+            let replacement = Credentials(clientID: current.clientID, subject: current.subject, email: current.email,
+                accessToken: updated.access_token, refreshToken: updated.refresh_token ?? current.refreshToken,
+                idToken: current.idToken,
+                scopes: updated.scope.map { $0.split(separator: " ").map(String.init) } ?? current.scopes,
+                expiresAt: Date().addingTimeInterval(updated.expires_in))
+            try Vault.save(replacement, key: "account")
+            self.credentials = replacement
+            guard replacement.permitsInference else { throw ProbeError("세션 갱신 후 요금제 사용 권한이 없어 요청을 멈췄어요.") }
+            return replacement
+        }
+        credentialRefresh = task
+        defer { credentialRefresh = nil }
+        return try await task.value
     }
     func loadModels() async {
         guard !busy else { return }
@@ -167,7 +178,7 @@ final class ProbeModel: ObservableObject {
         registrations = updated
     }
     func disconnect() async {
-        guard !busy, let current = credentials else { return }
+        guard !busy, credentialRefresh == nil, let current = credentials else { return }
         busy = true; isDisconnecting = true; error = nil
         defer { busy = false; isDisconnecting = false }
         do {

@@ -152,6 +152,7 @@ private final class HTTPFixture {
 private final class RevocationStub: URLProtocol {
     static var handler: ((URLRequest) throws -> (Int, Data))?
     static var deliveryDelay: TimeInterval = 0
+    static var delayForResponse: ((Data) -> TimeInterval)?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -163,7 +164,8 @@ private final class RevocationStub: URLProtocol {
                 self.client?.urlProtocol(self, didLoad: data)
                 self.client?.urlProtocolDidFinishLoading(self)
             }
-            if Self.deliveryDelay > 0 { DispatchQueue.global().asyncAfter(deadline: .now() + Self.deliveryDelay, execute: deliver) }
+            let delay = Self.delayForResponse?(data) ?? Self.deliveryDelay
+            if delay > 0 { DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: deliver) }
             else { deliver() }
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
@@ -191,7 +193,7 @@ final class SessionRevocationTests: XCTestCase {
         }
         return data
     }
-    override func tearDown() { RevocationStub.handler = nil; RevocationStub.deliveryDelay = 0; super.tearDown() }
+    override func tearDown() { RevocationStub.handler = nil; RevocationStub.deliveryDelay = 0; RevocationStub.delayForResponse = nil; super.tearDown() }
     func testRevocationAcceptsEmpty200AndPostsOnlyToTrustedEndpoint() async throws {
         var calls = 0
         RevocationStub.handler = { request in
@@ -279,20 +281,122 @@ final class SessionRevocationTests: XCTestCase {
             let response: [String: Any] = ["object": "response", "status": "completed", "output": [["content": [["type": "output_text", "text": reply]]]]]
             return (200, try JSONSerialization.data(withJSONObject: response))
         }
-        let request = Task { await store.send(text: "좋아요", korean: "", auth: auth) }
+        store.mode = .word
+        let request = Task { await store.send(text: "좋아요", korean: "", auth: auth, in: .sentence, mood: .polite) }
         await fulfillment(of: [received], timeout: 3)
-        XCTAssertEqual(store.sendingMode, .sentence)
+        XCTAssertEqual(store.sendingModes, [.sentence])
         store.mode = .word
         XCTAssertTrue(store.messages.isEmpty)
         await request.value
         XCTAssertNil(store.error)
         XCTAssertTrue(store.messages.isEmpty)
         XCTAssertFalse(store.isSending)
-        XCTAssertNil(store.sendingMode)
+        XCTAssertTrue(store.sendingModes.isEmpty)
         store.mode = .sentence
         XCTAssertEqual(store.messages.last?.reply?.text, "Sounds good.")
+        XCTAssertEqual(store.messages.last?.mood, .polite)
         XCTAssertEqual(store.chats.count, 1)
         XCTAssertEqual(store.chats.first?.mode, .sentence)
+    }
+
+    private func completion(kind: String, text: String) throws -> Data {
+        let reply = try JSONSerialization.data(withJSONObject: ["kind": kind, "text": text, "meaning": "테스트 답변"])
+        let response: [String: Any] = ["object": "response", "status": "completed", "output": [["content": [["type": "output_text", "text": String(decoding: reply, as: UTF8.self)]]]]]
+        return try JSONSerialization.data(withJSONObject: response)
+    }
+    @MainActor
+    func testTabsSendConcurrentlyAndFinishIndependently() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mockAPI = api(), auth = ProbeModel(loadSavedAccount: false)
+        auth.credentials = credential
+        auth.models = [ModelChoice(slug: AIConfiguration.model, display_name: AIConfiguration.modelName, visibility: "list")]
+        auth.selectedModel = AIConfiguration.model
+        let store = StudyStore(directory: directory, api: mockAPI); store.switchAccount(credential.subject)
+        let sentenceStarted = expectation(description: "Sentence started"), wordStarted = expectation(description: "Word started")
+        var requests = [String]()
+        let lock = NSLock()
+        RevocationStub.delayForResponse = { data in String(decoding: data, as: UTF8.self).contains("WORDREPLY") ? 0.5 : 1.2 }
+        RevocationStub.handler = { request in
+            let isWord = String(decoding: self.body(request), as: UTF8.self).contains("apple")
+            lock.lock(); requests.append(isWord ? "word" : "sentence"); lock.unlock()
+            if isWord { wordStarted.fulfill() } else { sentenceStarted.fulfill() }
+            return (200, try self.completion(kind: isWord ? "word" : "sentence", text: isWord ? "WORDREPLY" : "SENTENCEREPLY"))
+        }
+        let sentence = Task { await store.send(text: "안녕하세요", korean: "", auth: auth) }
+        await fulfillment(of: [sentenceStarted], timeout: 3)
+        store.mode = .word
+        let word = Task { await store.send(text: "apple", korean: "", auth: auth) }
+        await fulfillment(of: [wordStarted], timeout: 3)
+        XCTAssertEqual(store.sendingModes, [.word, .sentence])
+        await store.send(text: "duplicate blocked", korean: "", auth: auth)
+        await word.value
+        XCTAssertFalse(store.isSending(in: .word))
+        XCTAssertTrue(store.isSending(in: .sentence))
+        XCTAssertEqual(store.messages.last?.reply?.text, "WORDREPLY")
+        await sentence.value
+        store.mode = .sentence
+        XCTAssertEqual(store.messages.last?.reply?.text, "SENTENCEREPLY")
+        XCTAssertEqual(store.chats.count, 2)
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertFalse(store.isSending)
+    }
+    @MainActor
+    func testOneTabFailureDoesNotStopOrClearTheOtherTab() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mockAPI = api(), auth = ProbeModel(loadSavedAccount: false)
+        auth.credentials = credential
+        auth.models = [ModelChoice(slug: AIConfiguration.model, display_name: AIConfiguration.modelName, visibility: "list")]
+        auth.selectedModel = AIConfiguration.model
+        let store = StudyStore(directory: directory, api: mockAPI); store.switchAccount(credential.subject)
+        let sentenceStarted = expectation(description: "Sentence started")
+        var failWord = true
+        RevocationStub.delayForResponse = { data in String(decoding: data, as: UTF8.self).contains("SENTENCEREPLY") ? 0.7 : 0.05 }
+        RevocationStub.handler = { request in
+            let isWord = String(decoding: self.body(request), as: UTF8.self).contains("apple")
+            if isWord && failWord { return (500, Data()) }
+            if !isWord { sentenceStarted.fulfill() }
+            return (200, try self.completion(kind: isWord ? "word" : "sentence", text: isWord ? "WORDREPLY" : "SENTENCEREPLY"))
+        }
+        let sentence = Task { await store.send(text: "안녕하세요", korean: "", auth: auth) }
+        await fulfillment(of: [sentenceStarted], timeout: 3)
+        store.mode = .word
+        await store.send(text: "apple", korean: "", auth: auth)
+        XCTAssertNotNil(store.currentError)
+        XCTAssertTrue(store.isSending(in: .sentence))
+        store.mode = .sentence
+        XCTAssertNil(store.currentError)
+        await sentence.value
+        XCTAssertEqual(store.messages.last?.reply?.text, "SENTENCEREPLY")
+        store.mode = .word
+        XCTAssertNotNil(store.currentError)
+        failWord = false
+        await store.send(text: "", korean: "", auth: auth, retry: true)
+        XCTAssertNil(store.currentError)
+        XCTAssertEqual(store.messages.count, 2)
+        XCTAssertEqual(store.messages.last?.reply?.text, "WORDREPLY")
+    }
+    @MainActor
+    func testSimultaneousRequestsShareOneCredentialRefresh() async throws {
+        let prior = try Vault.read(Credentials.self, key: "account")
+        defer { if let prior { try? Vault.save(prior, key: "account") } else { try? Vault.delete("account") } }
+        let auth = ProbeModel(loadSavedAccount: false, api: api())
+        auth.credentials = Credentials(clientID: credential.clientID, subject: credential.subject, email: credential.email, accessToken: "expired", refreshToken: "synthetic-refresh", idToken: "synthetic-id", scopes: credential.scopes, expiresAt: .distantPast)
+        var posts = 0
+        RevocationStub.deliveryDelay = 0.2
+        RevocationStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/accounts/oauth/token")
+            posts += 1
+            return (200, Data(#"{"access_token":"fresh-access","refresh_token":"rotated-refresh","expires_in":3600,"token_type":"bearer","scope":"chatgpt.tokens.use.direct"}"#.utf8))
+        }
+        async let first = auth.activeCredential()
+        async let second = auth.activeCredential()
+        let results = try await (first, second)
+        XCTAssertEqual(results.0.accessToken, "fresh-access")
+        XCTAssertEqual(results.1.accessToken, "fresh-access")
+        XCTAssertEqual(auth.credentials?.refreshToken, "rotated-refresh")
+        XCTAssertEqual(posts, 1)
     }
 
 }

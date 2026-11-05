@@ -48,7 +48,7 @@ struct IntoEnglishView: View {
     @FocusState private var composerFocused: Bool
     private var draft: Binding<String> { Binding(get: { drafts[store.mode] ?? "" }, set: { drafts[store.mode] = $0 }) }
     private var signedIn: Bool { auth.credentials?.permitsInference == true }
-    private var busy: Bool { store.isSending || auth.busy }
+    private var busy: Bool { store.isSending(in: store.mode) || auth.busy }
     private var canSend: Bool { signedIn && !busy && (!(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)).isEmpty || (store.mode == .sentence && !koreanDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)) }
 
     var body: some View {
@@ -64,18 +64,21 @@ struct IntoEnglishView: View {
                                 messageView(message)
                             }
                         }
-                        if store.isSending && store.sendingMode == store.mode {
+                        if store.isSending(in: store.mode) {
                             HStack(spacing: 10) {
                                 companionMark
                                 ProgressView().tint(EnglishTheme.coral)
                                 Text("응답을 기다리는 중…").font(.caption).foregroundStyle(EnglishTheme.muted)
                             }.padding(.vertical, 8)
                         }
-                        if let error = store.error ?? auth.error {
+                        if let error = store.currentError ?? auth.error {
                             VStack(alignment: .leading, spacing: 10) {
                                 Label(error, systemImage: "exclamationmark.circle").font(.footnote).foregroundStyle(.red).textSelection(.enabled)
                                 if store.messages.last?.isUser == true && !busy {
-                                    Button("다시 시도") { Task { await store.send(text: "", korean: "", auth: auth, retry: true) } }
+                                    Button("다시 시도") {
+                                        let mode = store.mode, mood = store.mood
+                                        Task { await store.send(text: "", korean: "", auth: auth, retry: true, in: mode, mood: mood) }
+                                    }
                                         .font(.footnote.weight(.semibold)).tint(EnglishTheme.coral)
                                 }
                             }.padding(15).frame(maxWidth: .infinity, alignment: .leading)
@@ -86,7 +89,7 @@ struct IntoEnglishView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: store.messages.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
-                .onChange(of: store.isSending) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
+                .onChange(of: store.isSending(in: store.mode)) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: composerFocused) { _, focused in if focused { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } } }
             }
         }
@@ -251,7 +254,7 @@ struct IntoEnglishView: View {
                 HStack(spacing: 8) { companionMark; Text("Into English").font(.caption.weight(.semibold)) }
                 ReplyCard(reply: reply, mood: message.mood, saved: store.isSaved(reply), onSave: { store.toggleSave(message) }, onCopy: { copy(reply.text) }, onSpeak: { speak(reply) }, onChoice: { choice in
                     draft.wrappedValue = choice; koreanDraft = ""; submit()
-                }).disabled(store.isSending)
+                }).disabled(store.isSending(in: store.mode))
             }
         }
     }
@@ -318,9 +321,10 @@ struct IntoEnglishView: View {
     private func submit() {
         guard canSend else { if !signedIn { showSettings = true }; return }
         let text = draft.wrappedValue, korean = koreanDraft
-        guard text.count <= 2000, korean.count <= 2000 else { store.error = "2,000자 이내로 적어 주세요."; return }
+        let mode = store.mode, mood = store.mood
+        guard text.count <= 2000, korean.count <= 2000 else { store.reportInputError("2,000자 이내로 적어 주세요.", in: mode); return }
         draft.wrappedValue = ""; koreanDraft = ""; composerFocused = false
-        Task { await store.send(text: text, korean: korean, auth: auth) }
+        Task { await store.send(text: text, korean: korean, auth: auth, in: mode, mood: mood) }
     }
     private func copy(_ text: String) {
         UIPasteboard.general.string = text
@@ -364,12 +368,12 @@ struct IntoEnglishView: View {
                                     Text(chat.updatedAt, style: .date).font(.caption2).foregroundStyle(EnglishTheme.muted)
                                 }
                             }.padding(.vertical, 5)
-                        }.disabled(busy)
+                        }.disabled(auth.busy || store.isSending(in: chat.mode))
                             .accessibilityIdentifier("history-chat-\(chat.id)")
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) { withAnimation { store.deleteChat(chat.id) } } label: {
                                     Image(systemName: "trash")
-                                }.labelStyle(.iconOnly).accessibilityLabel("삭제").disabled(busy)
+                                }.labelStyle(.iconOnly).accessibilityLabel("삭제").disabled(auth.busy || store.isSending(in: chat.mode))
                             }
                     }
                 }

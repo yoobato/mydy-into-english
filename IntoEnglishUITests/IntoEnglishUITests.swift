@@ -124,6 +124,9 @@ final class IntoEnglishUITests: XCTestCase {
         app.buttons["mode-word"].tap()
         XCTAssertTrue(app.buttons["mode-word"].isSelected)
         XCTAssertFalse(app.staticTexts["응답을 기다리는 중…"].exists)
+        let input = app.textViews["learning-input"].exists ? app.textViews["learning-input"] : app.textFields["learning-input"]
+        input.tap(); input.typeText("apple")
+        XCTAssertTrue(app.buttons["learning-send"].isEnabled)
         app.buttons["mode-sentence"].tap()
         XCTAssertTrue(app.staticTexts["응답을 기다리는 중…"].exists)
         app.buttons["최근 대화"].tap()
