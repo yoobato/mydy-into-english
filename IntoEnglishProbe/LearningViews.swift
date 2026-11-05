@@ -134,7 +134,12 @@ struct IntoEnglishView: View {
                 Button {
                     store.mode = mode; store.error = nil; showKorean = false; composerFocused = false
                 } label: {
-                    Label(mode.title, systemImage: mode.symbol).font(.system(size: 13, weight: store.mode == mode ? .semibold : .regular))
+                    HStack(spacing: 7) {
+                        Image(systemName: mode.symbol)
+                        Text(mode.title)
+                    }
+                        .font(.system(size: 13, weight: .semibold))
+                        .contentTransition(.identity)
                         .frame(maxWidth: .infinity).padding(.vertical, 12)
                         .background(store.mode == mode ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 9))
                         .foregroundStyle(store.mode == mode ? EnglishTheme.ink : EnglishTheme.muted)
@@ -144,7 +149,7 @@ struct IntoEnglishView: View {
             }
         }.padding(4).background(EnglishTheme.line.opacity(0.4), in: RoundedRectangle(cornerRadius: 13))
             .padding(.horizontal, 23).padding(.bottom, 8).disabled(busy)
-            .transaction { $0.animation = nil }
+            .transaction { $0.animation = nil; $0.disablesAnimations = true }
     }
     private var welcome: some View {
         VStack(spacing: 0) {
