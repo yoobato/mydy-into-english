@@ -94,13 +94,27 @@ enum ReasoningEffort: String, CaseIterable, Identifiable {
     var title: String {
         switch self { case .automatic: return "모델 기본값"; case .low: return "Light"; case .medium: return "Medium"; case .high: return "High" }
     }
-    static func supports(_ model: String) -> Bool { model.hasPrefix("gpt-6") || model.hasPrefix("gpt-5.6") }
-    func value(for model: String) -> String? { self != .automatic && Self.supports(model) ? rawValue : nil }
+    // Only expose explicitly documented models, not arbitrary future/pro variants.
+    static func choices(for model: String) -> [Self] {
+        let known = ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna",
+                     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+        return known.contains(model) ? allCases : [.automatic]
+    }
+    static func supports(_ model: String) -> Bool { choices(for: model).count > 1 }
+    static func recommended(for model: String) -> Self? { supports(model) ? .low : nil }
+    func effective(for model: String) -> Self { Self.choices(for: model).contains(self) ? self : .automatic }
+    func value(for model: String) -> String? {
+        let effective = effective(for: model)
+        return effective != .automatic ? effective.rawValue : nil
+    }
 }
 enum AIConfiguration {
     static let model = "gpt-6.1-sol"
     static let modelName = "GPT-6.1 Sol"
     static let reasoningEffort = "low"
+    static func recommendedModel(in models: [ModelChoice]) -> String? {
+        models.first(where: { $0.slug == model })?.slug
+    }
     static func choose(_ models: [ModelChoice], preferred: String?) -> String {
         models.first(where: { $0.slug == preferred })?.slug
             ?? models.first(where: { $0.slug == model })?.slug

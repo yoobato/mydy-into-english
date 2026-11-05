@@ -57,9 +57,18 @@ final class IntoEnglishUITests: XCTestCase {
         XCTAssertTrue(app.buttons["ai-model"].exists)
         XCTAssertTrue(app.buttons["ai-reasoning"].exists)
         app.buttons["ai-model"].tap()
+        let sol = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "GPT-6.1 Sol")).firstMatch
+        XCTAssertTrue(sol.waitForExistence(timeout: 3))
+        XCTAssertTrue(sol.label.contains("(추천)"))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Model recommendation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        XCTAssertFalse(app.buttons["GPT-6 Astra"].label.contains("(추천)"))
         app.buttons["GPT-6 Astra"].tap()
         XCTAssertTrue(app.buttons["ai-model"].label.contains("Astra"))
         app.buttons["ai-reasoning"].tap()
+        XCTAssertTrue(app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Light")).firstMatch.label.contains("(추천)"))
         app.buttons["High"].tap()
         XCTAssertTrue(app.buttons["ai-reasoning"].label.contains("High"))
         XCTAssertFalse(app.buttons["사용량"].exists)

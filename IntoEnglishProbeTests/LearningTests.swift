@@ -168,4 +168,19 @@ final class LearningTests: XCTestCase {
         XCTAssertNil(ReasoningEffort.high.value(for: "unknown"))
     }
 
+    func testRecommendationsOnlyUseAvailableConfirmedChoices() {
+        let sol = ModelChoice(slug: "gpt-6.1-sol", display_name: "Sol", visibility: "list")
+        let other = ModelChoice(slug: "gpt-6-future", display_name: "Future", visibility: "list")
+        XCTAssertEqual(AIConfiguration.recommendedModel(in: [other, sol]), sol.slug)
+        XCTAssertNil(AIConfiguration.recommendedModel(in: [other]))
+        XCTAssertNil(AIConfiguration.recommendedModel(in: []))
+        XCTAssertEqual(ReasoningEffort.recommended(for: sol.slug), .low)
+        XCTAssertTrue(ReasoningEffort.choices(for: sol.slug).contains(.low))
+        XCTAssertEqual(ReasoningEffort.choices(for: other.slug), [.automatic])
+        XCTAssertNil(ReasoningEffort.recommended(for: other.slug))
+        XCTAssertNil(ReasoningEffort.high.value(for: other.slug))
+        XCTAssertEqual(ReasoningEffort.high.effective(for: other.slug), .automatic)
+        XCTAssertNil(ReasoningEffort.low.value(for: "gpt-6.1-sol-pro"))
+    }
+
 }

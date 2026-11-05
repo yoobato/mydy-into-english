@@ -427,6 +427,13 @@ struct AccountSettings: View {
     let onSignIn: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDisconnect = false
+    @State private var aiSelection: AISelection?
+    private enum AISelection: String, Identifiable {
+        case model, reasoning
+        var id: String { rawValue }
+    }
+    private var recommendedModel: String? { AIConfiguration.recommendedModel(in: auth.models) }
+    private var currentModel: ModelChoice? { auth.models.first { $0.slug == auth.selectedModel } }
     private var version: String { "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""))" }
     var body: some View {
         NavigationStack {
@@ -456,17 +463,29 @@ struct AccountSettings: View {
                 if auth.credentials?.permitsInference == true {
                     Section("AI") {
                         if !auth.models.isEmpty {
-                            Picker("모델", selection: $auth.selectedModel) {
-                                ForEach(auth.models) { Text($0.display_name).tag($0.slug) }
+                            Button { aiSelection = .model } label: {
+                                HStack {
+                                    Text("모델").foregroundStyle(EnglishTheme.ink)
+                                    Spacer(minLength: 8)
+                                    choiceLabel(currentModel?.display_name ?? "모델 확인 중",
+                                                recommended: auth.selectedModel == recommendedModel)
+                                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                                }
                             }.accessibilityIdentifier("ai-model").disabled(auth.busy || locked)
                         }
-                        if ReasoningEffort.supports(auth.selectedModel) {
-                            Picker("추론 강도", selection: $store.effort) {
-                                ForEach(ReasoningEffort.allCases) { Text($0.title).tag($0) }
-                            }.accessibilityIdentifier("ai-reasoning").disabled(locked)
+                        if let model = currentModel, ReasoningEffort.supports(model.slug) {
+                            Button { aiSelection = .reasoning } label: {
+                                HStack {
+                                    Text("추론 강도").foregroundStyle(EnglishTheme.ink)
+                                    Spacer(minLength: 8)
+                                    choiceLabel(store.effort.effective(for: model.slug).title,
+                                                recommended: store.effort.effective(for: model.slug) == ReasoningEffort.recommended(for: model.slug))
+                                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                                }
+                            }.accessibilityIdentifier("ai-reasoning").disabled(auth.busy || locked)
                         } else {
                             LabeledContent("추론 강도", value: "모델 기본값")
-                            Text("이 모델은 기본 추론 강도로 요청합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                            Text("지원 범위가 확인되지 않은 모델은 기본 추론 강도로 요청합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
                         }
                         Button("모델 목록 새로고침") { Task { await auth.loadModels() } }.disabled(auth.busy || locked)
                     }
@@ -485,7 +504,54 @@ struct AccountSettings: View {
                     Button("취소", role: .cancel) {}
                     Button("연결 해제", role: .destructive) { auth.disconnect() }
                 } message: { Text("기록은 기기에 남습니다. 원격 권한 철회는 ChatGPT 설정에서 할 수 있습니다.") }
-        }.tint(EnglishTheme.coral)
+        }
+        .sheet(item: $aiSelection) { selection in
+            NavigationStack {
+                List {
+                    if selection == .model {
+                        ForEach(auth.models) { model in
+                            Button {
+                                guard !auth.busy, !locked, auth.models.contains(where: { $0.slug == model.slug }) else { return }
+                                auth.selectedModel = model.slug
+                                aiSelection = nil
+                            } label: {
+                                selectionLabel(model.display_name, recommended: model.slug == recommendedModel,
+                                               selected: model.slug == auth.selectedModel)
+                            }
+                        }
+                    } else if let model = currentModel {
+                        ForEach(ReasoningEffort.choices(for: model.slug)) { effort in
+                            Button {
+                                guard !locked else { return }
+                                store.effort = effort
+                                aiSelection = nil
+                            } label: {
+                                selectionLabel(effort.title, recommended: effort == ReasoningEffort.recommended(for: model.slug),
+                                               selected: effort == store.effort.effective(for: model.slug))
+                            }
+                        }
+                    }
+                }
+                .scrollContentBackground(.hidden).background(EnglishTheme.background)
+                .navigationTitle(selection == .model ? "모델 선택" : "추론 강도 선택")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { aiSelection = nil } } }
+            }.tint(EnglishTheme.coral).presentationDetents([.medium, .large])
+        }
+        .tint(EnglishTheme.coral)
+    }
+    private func choiceLabel(_ title: String, recommended: Bool) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+            if recommended { Text("(추천)").font(.caption2).foregroundStyle(EnglishTheme.muted) }
+        }
+    }
+    private func selectionLabel(_ title: String, recommended: Bool, selected: Bool) -> some View {
+        HStack {
+            choiceLabel(title, recommended: recommended).foregroundStyle(EnglishTheme.ink)
+            Spacer()
+            if selected { Image(systemName: "checkmark").foregroundStyle(EnglishTheme.coral) }
+        }.contentShape(Rectangle())
     }
 }
 
