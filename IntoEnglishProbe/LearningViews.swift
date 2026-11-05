@@ -139,8 +139,8 @@ struct IntoEnglishView: View {
                     if auth.busy { ProgressView("계정 연결 중…").font(.caption).tint(EnglishTheme.coral) }
                     if let error = auth.error { Text(error).font(.footnote).foregroundStyle(.red).textSelection(.enabled) }
                     VStack(spacing: 8) {
-                        Text("내 ChatGPT 계정으로 번역·교정 답변을 받습니다.")
-                        Text("질문과 필요한 대화 내용은 OpenAI에 직접 전달됩니다. Into English 운영자는 받지 않으며, 대화 기록은 이 기기에 보관됩니다.")
+                        Text("내 ChatGPT 계정으로 사용합니다.")
+                        Text("대화 내용은 운영자에게 전달되지 않습니다.")
                     }.font(.caption).foregroundStyle(EnglishTheme.muted).multilineTextAlignment(.center).lineSpacing(3)
                         .accessibilityIdentifier("login-data-explanation")
                 }
@@ -154,7 +154,7 @@ struct IntoEnglishView: View {
     private var header: some View {
         HStack(spacing: 12) {
             Button { composerFocused = false; showHistory = true } label: { Image(systemName: "line.3.horizontal").font(.system(size: 18)) }
-                .accessibilityLabel("최근 대화").disabled(busy)
+                .accessibilityLabel("최근 대화")
             Spacer()
             HStack(spacing: 0) {
                 Text("into english").font(.system(size: 22, weight: .semibold, design: .serif)).tracking(-0.8)
@@ -163,7 +163,7 @@ struct IntoEnglishView: View {
             Spacer()
             Button { composerFocused = false; showSaved = true } label: { Image(systemName: "bookmark").font(.system(size: 17)) }.accessibilityLabel("저장한 표현")
             Button { composerFocused = false; showSettings = true } label: { Image(systemName: "person.crop.circle").font(.system(size: 20)) }
-                .accessibilityLabel("계정과 모델 설정").disabled(busy)
+                .accessibilityLabel("계정과 모델 설정")
         }.padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 20)
     }
     private var modeTabs: some View {
@@ -464,8 +464,11 @@ struct AccountSettings: View {
     @State private var confirmDisconnect = false
     @State private var aiSelection: AISelection?
     private enum AISelection: String, Identifiable {
-        case model, reasoning
+        case model, reasoning, region
         var id: String { rawValue }
+        var title: String {
+            switch self { case .model: return "모델 선택"; case .reasoning: return "추론 강도 선택"; case .region: return "영어 지역 선택" }
+        }
     }
     private var recommendedModel: String? { AIConfiguration.recommendedModel(in: auth.models) }
     private var currentModel: ModelChoice? { auth.models.first { $0.slug == auth.selectedModel } }
@@ -490,11 +493,17 @@ struct AccountSettings: View {
                     }
                 }
                 Section("영어 설정") {
-                    Picker("영어 지역", selection: $store.region) {
-                        ForEach(EnglishRegion.allCases) { Text($0.title).tag($0) }
+                    Button { aiSelection = .region } label: {
+                        HStack {
+                            Text("영어 지역").foregroundStyle(EnglishTheme.ink)
+                            Spacer(minLength: 8)
+                            Text(store.region.selectionTitle)
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                        }
                     }.accessibilityIdentifier("english-region").disabled(locked)
-                    Text("번역·문장 교정·예문에 선택한 지역의 철자·표현·어투를 적용하고 필요한 문법도 교정합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                    Text(store.region.summary).font(.caption).foregroundStyle(EnglishTheme.muted)
                 }
+                if locked { Text("응답이 끝나면 설정을 변경할 수 있습니다.").font(.caption).foregroundStyle(EnglishTheme.muted) }
                 if auth.credentials?.permitsInference == true {
                     Section("AI") {
                         if !auth.models.isEmpty {
@@ -540,12 +549,25 @@ struct AccountSettings: View {
                 .alert("이 기기의 계정 연결을 해제할까요?", isPresented: $confirmDisconnect) {
                     Button("취소", role: .cancel) {}
                     Button("연결 해제", role: .destructive) { auth.disconnect() }
-                } message: { Text("기록은 기기에 남습니다. 원격 권한 철회는 ChatGPT 설정에서 할 수 있습니다.") }
+                } message: { Text("이 기기에서 로그아웃하며, 대화 기록은 남습니다. ChatGPT 설정에서는 Into English의 계정 사용 허용도 해제할 수 있습니다.") }
         }
         .sheet(item: $aiSelection) { selection in
             NavigationStack {
                 List {
-                    if selection == .model {
+                    if selection == .region {
+                        ForEach(EnglishRegion.allCases) { region in
+                            Button {
+                                guard !locked else { return }
+                                store.region = region
+                                aiSelection = nil
+                            } label: {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    selectionLabel(region.selectionTitle, recommended: false, selected: region == store.region)
+                                    Text(region.summary).font(.caption).foregroundStyle(EnglishTheme.muted)
+                                }.padding(.vertical, 3)
+                            }.accessibilityIdentifier("region-\(region.rawValue)")
+                        }
+                    } else if selection == .model {
                         ForEach(auth.models) { model in
                             Button {
                                 guard !auth.busy, !locked, auth.models.contains(where: { $0.slug == model.slug }) else { return }
@@ -570,7 +592,7 @@ struct AccountSettings: View {
                     }
                 }
                 .scrollContentBackground(.hidden).background(EnglishTheme.background)
-                .navigationTitle(selection == .model ? "모델 선택" : "추론 강도 선택")
+                .navigationTitle(selection.title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { aiSelection = nil } } }
             }.tint(EnglishTheme.coral).presentationDetents([.medium, .large])

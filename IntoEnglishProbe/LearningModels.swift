@@ -74,6 +74,19 @@ enum EnglishRegion: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self { case .us: return "미국"; case .uk: return "영국"; case .canada: return "캐나다"; case .australia: return "호주"; case .neutral: return "지역 중립" }
     }
+    var emoji: String {
+        switch self { case .us: return "🇺🇸"; case .uk: return "🇬🇧"; case .canada: return "🇨🇦"; case .australia: return "🇦🇺"; case .neutral: return "🌐" }
+    }
+    var selectionTitle: String { "\(emoji) \(title)" }
+    var summary: String {
+        switch self {
+        case .us: return "미국식 철자·표현·어투"
+        case .uk: return "영국식 철자·표현·어투"
+        case .canada: return "캐나다식 철자·표현·어투"
+        case .australia: return "호주식 철자·표현·어투"
+        case .neutral: return "지역 특유의 속어를 피한, 두루 통하는 영어"
+        }
+    }
     var instruction: String {
         switch self {
         case .us: return "Use American English spelling, vocabulary, idiom, and local conversational register (directness, politeness, understatement) appropriate to context; avoid stereotypes or forced slang."
@@ -296,6 +309,10 @@ final class StudyStore: ObservableObject {
     init(directory: URL? = nil) {
         self.directory = directory
         for mode in LearningMode.allCases { refreshExamples(for: mode) }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-testing"),
+           ProcessInfo.processInfo.arguments.contains("--ui-testing-waiting") { isSending = true }
+        #endif
     }
     func refreshExamples(for mode: LearningMode) {
         let key = "examples.previous.\(mode.rawValue)"

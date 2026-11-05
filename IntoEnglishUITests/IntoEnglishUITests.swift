@@ -40,7 +40,10 @@ final class IntoEnglishUITests: XCTestCase {
         app.buttons["계정과 모델 설정"].tap()
         XCTAssertTrue(app.staticTexts["버전"].waitForExistence(timeout: 3))
         app.buttons["english-region"].tap()
-        app.buttons["영국"].tap()
+        XCTAssertTrue(app.navigationBars["영어 지역 선택"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["region-us"].label.contains("🇺🇸"))
+        app.buttons["region-uk"].tap()
+        XCTAssertTrue(app.buttons["english-region"].label.contains("🇬🇧"))
         app.buttons["AI에 보내는 프롬프트"].tap()
         XCTAssertTrue(app.staticTexts["전송 프롬프트"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Use British English")).firstMatch.exists)
@@ -103,12 +106,28 @@ final class IntoEnglishUITests: XCTestCase {
         XCTAssertTrue(signIn.isHittable)
         XCTAssertFalse(app.buttons["mode-word"].isHittable)
         XCTAssertFalse(app.buttons["Continue with ChatGPT"].exists)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "내 ChatGPT 계정으로 번역·교정")).firstMatch.exists)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Into English 운영자는 받지")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "내 ChatGPT 계정으로 사용합니다.")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "대화 내용은 운영자에게 전달되지 않습니다.")).firstMatch.exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Login screen"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+
+    func testWaitingKeepsHistoryAndSettingsAccessible() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-testing", "--ui-testing-signed-in", "--ui-testing-waiting"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["응답을 기다리는 중…"].waitForExistence(timeout: 5))
+        app.buttons["최근 대화"].tap()
+        XCTAssertTrue(app.navigationBars["대화 기록"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["새로운 대화"].isEnabled)
+        app.navigationBars.buttons["닫기"].tap()
+        app.buttons["계정과 모델 설정"].tap()
+        XCTAssertTrue(app.staticTexts["버전"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["english-region"].isEnabled)
+        app.navigationBars.buttons["닫기"].tap()
+        XCTAssertTrue(app.staticTexts["응답을 기다리는 중…"].exists)
     }
 
 }
