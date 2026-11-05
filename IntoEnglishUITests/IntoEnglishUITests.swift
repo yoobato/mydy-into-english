@@ -103,8 +103,8 @@ final class IntoEnglishUITests: XCTestCase {
         XCTAssertTrue(signIn.isHittable)
         XCTAssertFalse(app.buttons["mode-word"].isHittable)
         XCTAssertFalse(app.buttons["Continue with ChatGPT"].exists)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "내 ChatGPT 계정의 권한")).firstMatch.exists)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "개발자 서버를 거치지")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "내 ChatGPT 계정으로 번역·교정")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Into English 운영자는 받지")).firstMatch.exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Login screen"
         screenshot.lifetime = .keepAlways

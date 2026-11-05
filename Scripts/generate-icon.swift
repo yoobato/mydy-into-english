@@ -8,10 +8,10 @@ guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil), let ic
 let ivory = NSColor(srgbRed: 0.973, green: 0.965, blue: 0.945, alpha: 1)
 let ink = NSColor(srgbRed: 0.208, green: 0.275, blue: 0.231, alpha: 1)
 let muted = NSColor(srgbRed: 0.451, green: 0.502, blue: 0.447, alpha: 1)
-func render(_ width: Int, _ height: Int, to path: URL, draw: () -> Void) throws {
+func render(_ width: Int, _ height: Int, to path: URL, transparent: Bool = false, draw: () -> Void) throws {
     let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
                             bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+                            bitmapInfo: (transparent ? CGImageAlphaInfo.premultipliedLast : .noneSkipLast).rawValue)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
     draw()
@@ -20,6 +20,17 @@ func render(_ width: Int, _ height: Int, to path: URL, draw: () -> Void) throws 
     CGImageDestinationAddImage(output, image, nil)
     guard CGImageDestinationFinalize(output) else { fatalError("Could not save image") }
 }
+// Pre-render the rounded silhouette for iOS launch screens, which cannot run layer code.
+func exportBrandMark() throws {
+    try render(270, 270, to: root.appendingPathComponent("IntoEnglishProbe/Assets.xcassets/BrandMark.imageset/BrandMark.png"), transparent: true) {
+        let bounds = NSRect(x: 0, y: 0, width: 270, height: 270)
+        NSBezierPath(roundedRect: bounds, xRadius: 66, yRadius: 66).addClip()
+        NSGraphicsContext.current!.cgContext.draw(icon, in: bounds)
+    }
+}
+try exportBrandMark()
+if CommandLine.arguments.contains("--brand-mark-only") { exit(0) }
+
 let destination = CommandLine.arguments.count > 1 ? URL(fileURLWithPath: CommandLine.arguments[1]) : root.appendingPathComponent("IntoEnglishProbe/Assets.xcassets/AppIcon.appiconset/AppIcon.png")
 try render(1024, 1024, to: destination) {
     ink.setFill(); NSRect(x: 0, y: 0, width: 1024, height: 1024).fill()

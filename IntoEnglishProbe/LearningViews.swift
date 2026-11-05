@@ -139,8 +139,8 @@ struct IntoEnglishView: View {
                     if auth.busy { ProgressView("계정 연결 중…").font(.caption).tint(EnglishTheme.coral) }
                     if let error = auth.error { Text(error).font(.footnote).foregroundStyle(.red).textSelection(.enabled) }
                     VStack(spacing: 8) {
-                        Text("입력한 단어·문장과 필요한 대화 맥락을 내 ChatGPT 계정의 권한으로 OpenAI에 직접 보내 번역·교정 답변을 받습니다.")
-                        Text("개발자 서버를 거치지 않으며, 대화 기록은 이 기기에 보관됩니다. ChatGPT 앱의 대화 목록에는 추가되지 않습니다.")
+                        Text("내 ChatGPT 계정으로 번역·교정 답변을 받습니다.")
+                        Text("질문과 필요한 대화 내용은 OpenAI에 직접 전달됩니다. Into English 운영자는 받지 않으며, 대화 기록은 이 기기에 보관됩니다.")
                     }.font(.caption).foregroundStyle(EnglishTheme.muted).multilineTextAlignment(.center).lineSpacing(3)
                         .accessibilityIdentifier("login-data-explanation")
                 }
