@@ -69,3 +69,9 @@ AI 모델의 실제 번역·교정 품질은 실기기에서 추가로 확인합
 - [모델과 AI 요청](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
 - [계정·토큰 갱신](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
 - [현재 제약](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+
+## 저장소 이름과 플랫폼 결정
+
+저장소는 [`yoobato/mydy-into-english`](https://github.com/yoobato/mydy-into-english)로 이름을 변경했습니다. 앞으로 완료된 변경은 이 주소로 커밋·푸시합니다.
+
+2026-11-05 PWA 전환 검토 결과, 서버에서 사용자별 ChatGPT 로그인을 받아 구독 사용량으로 처리하는 일반 웹서비스는 OpenAI의 별도 접근 승인 경로가 필요합니다. 사용자의 조건부 지시에 따라 현재 동작이 검증된 iOS 앱을 유지합니다. 기존 앱·로그인·빌드 번호는 변경하지 않았습니다.
