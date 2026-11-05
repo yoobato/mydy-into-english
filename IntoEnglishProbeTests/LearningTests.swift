@@ -206,4 +206,66 @@ final class LearningTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(EnglishRegion.self, from: Data(#""neutral""#.utf8)), .us)
     }
 
+    @MainActor
+    func testChatDeletionPersistsAndKeepsSavedExpressionsAndOtherAccounts() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func path(_ subject: String) -> URL {
+            let hash = Data(SHA256.hash(data: Data(subject.utf8))).map { String(format: "%02x", $0) }.joined()
+            return directory.appendingPathComponent("\(hash).json")
+        }
+        var word = StudyChat(mode: .word), sentence = StudyChat(mode: .sentence)
+        word.messages = [StudyMessage(text: "remove this word chat", mood: .casual)]
+        sentence.messages = [StudyMessage(text: "remove this sentence chat", mood: .casual)]
+        let reply = try LearningReply.decode(#"{"kind":"word","text":"apple","meaning":"사과"}"#)
+        var archive = StudyArchive()
+        archive.chats = [word, sentence]
+        archive.saved = [SavedExpression(id: UUID(), reply: reply, mood: .casual, mode: .word, createdAt: Date())]
+        archive.lastRequest = RequestSnapshot(date: Date(), model: "fixture", instructions: "fixture", input: [["role":"user", "content":"remove this sentence chat"]], reasoning: nil)
+        let initial = try JSONEncoder().encode(archive)
+        try initial.write(to: path("first")); try initial.write(to: path("other"))
+        let store = StudyStore(directory: directory)
+        store.switchAccount("first")
+        store.open(word); store.open(sentence)
+        store.deleteChat(word.id)
+        XCTAssertEqual(store.chats.map(\.id), [sentence.id])
+        XCTAssertNil(store.activeIDs[.word])
+        XCTAssertEqual(store.activeIDs[.sentence], sentence.id)
+        XCTAssertNil(store.archive.lastRequest)
+        XCTAssertEqual(store.archive.saved.count, 1)
+        let relaunched = StudyStore(directory: directory)
+        relaunched.switchAccount("first")
+        XCTAssertEqual(relaunched.chats.count, 1)
+        store.deleteAllChats()
+        XCTAssertTrue(store.messages.isEmpty)
+        XCTAssertTrue(store.activeIDs.isEmpty)
+        relaunched.switchAccount("other"); relaunched.switchAccount("first")
+        XCTAssertTrue(relaunched.chats.isEmpty)
+        XCTAssertEqual(relaunched.archive.saved.first?.reply.text, "apple")
+        let other = try JSONDecoder().decode(StudyArchive.self, from: Data(contentsOf: path("other")))
+        XCTAssertEqual(Set(other.chats.map(\.id)), Set([word.id, sentence.id]))
+        XCTAssertEqual(other.saved.first?.reply.text, "apple")
+    }
+    @MainActor
+    func testFailedDeletionDoesNotRemoveVisibleHistory() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let subject = "deletion-failure"
+        let hash = Data(SHA256.hash(data: Data(subject.utf8))).map { String(format: "%02x", $0) }.joined()
+        let file = directory.appendingPathComponent("\(hash).json")
+        var chat = StudyChat(mode: .sentence)
+        chat.messages = [StudyMessage(text: "keep on failure", mood: .casual)]
+        var archive = StudyArchive(); archive.chats = [chat]
+        try JSONEncoder().encode(archive).write(to: file)
+        let store = StudyStore(directory: directory); store.switchAccount(subject); store.open(chat)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        store.deleteAllChats()
+        XCTAssertEqual(store.chats.count, 1)
+        XCTAssertEqual(store.messages.first?.text, "keep on failure")
+        XCTAssertNotNil(store.error)
+    }
+
 }

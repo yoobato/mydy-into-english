@@ -310,7 +310,12 @@ final class StudyStore: ObservableObject {
     private let api = PlanAPI()
     private let directory: URL?
     init(directory: URL? = nil) {
+        #if DEBUG
+        self.directory = ProcessInfo.processInfo.arguments.contains("--ui-testing-history") && ProcessInfo.processInfo.arguments.contains("--ui-testing")
+            ? FileManager.default.temporaryDirectory.appendingPathComponent("history-ui-\(UUID().uuidString)") : directory
+        #else
         self.directory = directory
+        #endif
         for mode in LearningMode.allCases { refreshExamples(for: mode) }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-testing"),
@@ -340,6 +345,15 @@ final class StudyStore: ObservableObject {
             let hash = Data(SHA256.hash(data: Data(subject.utf8))).map { String(format: "%02x", $0) }.joined()
             let url = root.appendingPathComponent("\(hash).json"); archiveURL = url
             if FileManager.default.fileExists(atPath: url.path) { archive = try JSONDecoder().decode(StudyArchive.self, from: Data(contentsOf: url)) }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--ui-testing"), ProcessInfo.processInfo.arguments.contains("--ui-testing-history"), subject == "synthetic-ui-account" {
+                var first = StudyChat(mode: .sentence), second = StudyChat(mode: .word)
+                first.messages = [StudyMessage(text: "테스트 대화 하나", mood: .casual)]
+                second.messages = [StudyMessage(text: "테스트 대화 둘", mood: .casual)]
+                first.updatedAt = Date(); second.updatedAt = Date().addingTimeInterval(-1)
+                archive.chats = [first, second]
+            }
+            #endif
             // Rewrite migrated archives without the retired usage ledger; keep chats and saved expressions.
             save()
             // Load history without reopening a conversation on a fresh launch.
@@ -357,6 +371,25 @@ final class StudyStore: ObservableObject {
         activeIDs[mode] = nil; error = nil; refreshExamples(for: mode)
     }
     func open(_ chat: StudyChat) { guard !isSending else { return }; mode = chat.mode; activeIDs[chat.mode] = chat.id; error = nil }
+    func deleteChat(_ id: UUID) { deleteChats([id]) }
+    func deleteAllChats() { deleteChats(Set(archive.chats.map(\.id))) }
+    private func deleteChats(_ ids: Set<UUID>) {
+        guard !isSending, !ids.isEmpty, archive.chats.contains(where: { ids.contains($0.id) }) else { return }
+        var updated = archive
+        updated.chats.removeAll { ids.contains($0.id) }
+        // A request preview may contain the removed conversation; never retain that copy.
+        updated.lastRequest = nil
+        do {
+            guard let archiveURL else { throw ProbeError("저장 위치를 확인하지 못했어요.") }
+            try JSONEncoder().encode(updated).write(to: archiveURL, options: [.atomic, .completeFileProtection])
+            let removedActiveChat = activeIDs[mode].map { ids.contains($0) } ?? false
+            activeIDs = activeIDs.filter { !ids.contains($0.value) }
+            archive = updated; error = nil
+            if removedActiveChat { refreshExamples(for: mode) }
+        } catch {
+            self.error = "대화를 삭제하지 못했어요. 기록은 그대로 유지했습니다. 다시 시도해 주세요."
+        }
+    }
     private func save() {
         guard let archiveURL else { return }
         do { try JSONEncoder().encode(archive).write(to: archiveURL, options: [.atomic, .completeFileProtection]) }

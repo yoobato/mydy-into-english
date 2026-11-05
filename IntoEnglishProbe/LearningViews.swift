@@ -40,6 +40,7 @@ struct IntoEnglishView: View {
     @State private var showSettings = false
     @State private var showSaved = false
     @State private var showHistory = false
+    @State private var confirmDeleteAllChats = false
     @State private var showKorean = false
     @State private var showMood = false
     @State private var drafts: [LearningMode: String] = [:]
@@ -363,11 +364,30 @@ struct IntoEnglishView: View {
                                 }
                             }.padding(.vertical, 5)
                         }.disabled(busy)
+                            .accessibilityIdentifier("history-chat-\(chat.id)")
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) { withAnimation { store.deleteChat(chat.id) } } label: {
+                                    Label("삭제", systemImage: "trash")
+                                }.disabled(busy)
+                            }
                     }
                 }
+                if let error = store.error { Text(error).font(.footnote).foregroundStyle(.red) }
             }.scrollContentBackground(.hidden).background(EnglishTheme.background)
                 .navigationTitle("대화 기록").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showHistory = false } } }
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("전체 삭제", role: .destructive) { confirmDeleteAllChats = true }
+                            .disabled(busy || store.chats.isEmpty).accessibilityIdentifier("history-delete-all")
+                    }
+                    ToolbarItem(placement: .confirmationAction) { Button("닫기") { showHistory = false } }
+                }
+                .alert("모든 대화를 삭제할까요?", isPresented: $confirmDeleteAllChats) {
+                    Button("취소", role: .cancel) {}
+                    Button("전체 삭제", role: .destructive) { store.deleteAllChats() }
+                } message: {
+                    Text("이 기기에 저장된 현재 계정의 대화를 모두 삭제합니다. 저장한 표현은 유지됩니다. 삭제한 대화는 복구할 수 없습니다.")
+                }
         }.tint(EnglishTheme.coral)
     }
 }
