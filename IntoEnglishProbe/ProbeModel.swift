@@ -7,6 +7,8 @@ struct PendingLogin {
     let nonce: String
     let verifier: String
     let redirect: URL
+    let clientID: String?
+    let subject: String?
 }
 
 @MainActor
@@ -22,12 +24,16 @@ final class ProbeModel: ObservableObject {
         }
     }
     @Published var busy = false
+    @Published private(set) var isDisconnecting = false
     @Published var error: String?
     private var pending: PendingLogin?
     private let listener = LoopbackListener()
-    private let api = PlanAPI()
+    private let api: PlanAPI
+    @Published private(set) var registrations: [AccountRegistration] = []
+    var rememberedRegistration: AccountRegistration? { registrations.last }
 
-    init(loadSavedAccount: Bool = true) {
+    init(loadSavedAccount: Bool = true, api: PlanAPI = PlanAPI()) {
+        self.api = api
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
             if ProcessInfo.processInfo.arguments.contains("--ui-testing-signed-in") {
@@ -41,9 +47,10 @@ final class ProbeModel: ObservableObject {
         guard loadSavedAccount else { return }
         do {
             credentials = try Vault.read(Credentials.self, key: "account")
+            registrations = try Vault.read([AccountRegistration].self, key: "registrations") ?? []
         } catch { self.error = error.localizedDescription }
     }
-    func signIn() async {
+    func signIn(newAccount: Bool = false) async {
         guard !busy else { return }
         busy = true; error = nil
         do {
@@ -58,10 +65,12 @@ final class ProbeModel: ObservableObject {
             }
             listener.onCallback = { [weak self] url in self?.acceptCallback(url) ?? false }
             let redirect = try await listener.start()
-            pending = PendingLogin(state: state, nonce: nonce, verifier: verifier, redirect: redirect)
+            let registration = newAccount ? nil : (credentials.map(AccountRegistration.init) ?? rememberedRegistration)
+            pending = PendingLogin(state: state, nonce: nonce, verifier: verifier, redirect: redirect,
+                                   clientID: registration?.clientID, subject: registration?.subject)
             var components = URLComponents(string: "https://auth.openai.com/api/accounts/authorize")!
             components.queryItems = [
-                URLQueryItem(name: "client_id", value: credentials?.clientID ?? "dynamic_agent_client"),
+                URLQueryItem(name: "client_id", value: registration?.clientID ?? "dynamic_agent_client"),
                 URLQueryItem(name: "ext_agent_host_id", value: host),
                 URLQueryItem(name: "response_type", value: "code"),
                 URLQueryItem(name: "redirect_uri", value: redirect.absoluteString),
@@ -71,7 +80,7 @@ final class ProbeModel: ObservableObject {
                 URLQueryItem(name: "code_challenge_method", value: "S256"),
                 URLQueryItem(name: "code_challenge", value: OAuthTools.challenge(verifier))
             ]
-            if credentials == nil { components.queryItems?.append(URLQueryItem(name: "agent_name_hint", value: "Into English")) }
+            if registration == nil { components.queryItems?.append(URLQueryItem(name: "agent_name_hint", value: "Into English")) }
             browser = BrowserDestination(url: components.url!)
         } catch {
             pending = nil; listener.stop(); busy = false
@@ -82,7 +91,7 @@ final class ProbeModel: ObservableObject {
         guard let attempt = pending else { return false }
         let callback: (code: String, clientID: String)
         do {
-            callback = try OAuthTools.callback(url, expectedRedirect: attempt.redirect, state: attempt.state, knownClientID: credentials?.clientID)
+            callback = try OAuthTools.callback(url, expectedRedirect: attempt.redirect, state: attempt.state, knownClientID: attempt.clientID)
         } catch {
             // An invalid local request must not replace credentials or complete authentication.
             self.error = error.localizedDescription
@@ -99,11 +108,13 @@ final class ProbeModel: ObservableObject {
                     "redirect_uri": attempt.redirect.absoluteString, "resource": "https://api.openai.com/v1"])
                 guard let idToken = tokens.id_token else { throw ProbeError("ID 토큰이 없어 로그인을 완료하지 않았어요.") }
                 let identity = try await IdentityValidator.verify(idToken, clientID: callback.clientID, nonce: attempt.nonce, session: api.session)
+                if let expected = attempt.subject, expected != identity.subject { throw ProbeError("선택한 계정과 다른 응답이에요. 다른 계정으로 시작하려면 로그인 화면에서 선택해 주세요.") }
                 if let prior, prior.subject != identity.subject { throw ProbeError("다른 계정의 응답이에요. 기존 연결을 해제하고 다시 로그인해 주세요.") }
                 let credential = Credentials(clientID: callback.clientID, subject: identity.subject, email: identity.email,
                     accessToken: tokens.access_token, refreshToken: tokens.refresh_token, idToken: idToken,
                     scopes: (tokens.scope ?? "").split(separator: " ").map(String.init),
                     expiresAt: Date().addingTimeInterval(tokens.expires_in))
+                try remember(credential)
                 try Vault.save(credential, key: "account")
                 credentials = credential
                 models = []; selectedModel = ""
@@ -149,11 +160,35 @@ final class ProbeModel: ObservableObject {
             try AIConfiguration.validate(models, selected: selectedModel)
         } catch { self.error = error.localizedDescription }
     }
-    func disconnect() {
-        guard !busy else { return }
+    private func remember(_ credential: Credentials) throws {
+        var updated = registrations.filter { $0.clientID != credential.clientID }
+        updated.append(AccountRegistration(credential))
+        try Vault.save(updated, key: "registrations")
+        registrations = updated
+    }
+    func disconnect() async {
+        guard !busy, let current = credentials else { return }
+        busy = true; isDisconnecting = true; error = nil
+        defer { busy = false; isDisconnecting = false }
+        do {
+            try remember(current)
+            #if DEBUG
+            let syntheticUI = ProcessInfo.processInfo.arguments.contains("--ui-testing")
+            if !syntheticUI { try await api.revokeSession(current) }
+            #else
+            try await api.revokeSession(current)
+            #endif
+        } catch {
+            self.error = "ChatGPT 쪽 연결 해제를 확인하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요. 이 기기의 로그인도 유지했습니다."
+            return
+        }
+        // Only clear the device credentials after OpenAI confirms revocation.
         do {
             try Vault.delete("account")
-            credentials = nil; models = []; selectedModel = ""; error = nil
-        } catch { self.error = error.localizedDescription }
+            credentials = nil; models = []; selectedModel = ""
+        } catch {
+            credentials = nil; models = []; selectedModel = ""
+            self.error = "ChatGPT 연결은 해제했지만 이 기기의 로그인 정보를 정리하지 못했어요. 앱을 다시 열어 확인해 주세요."
+        }
     }
 }

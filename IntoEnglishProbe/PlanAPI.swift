@@ -138,13 +138,57 @@ struct ProbeByteDecoder {
 
 final class PlanAPI {
     let session: URLSession
-    init() {
+    init(session: URLSession? = nil) {
+        if let session { self.session = session; return }
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 120
         config.httpCookieStorage = nil
         config.urlCache = nil
-        session = URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
+        self.session = URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
+    }
+    /// Revoke only the selected installation's renewable session, never another account's.
+    func revokeSession(_ credential: Credentials) async throws {
+        guard let refresh = credential.refreshToken, !refresh.isEmpty else {
+            throw ProbeError("ChatGPT 연결 해제에 필요한 세션 정보가 없어요.")
+        }
+        for attempt in 0..<3 {
+            do {
+                var discoveryRequest = URLRequest(url: URL(string: "https://auth.openai.com/.well-known/openid-configuration")!)
+                discoveryRequest.timeoutInterval = 10
+                let (data, discoveryResponse) = try await session.data(for: discoveryRequest)
+                try Self.checkRevocationStatus(discoveryResponse)
+                struct Discovery: Decodable { let issuer: String; let revocation_endpoint: String }
+                let discovery = try JSONDecoder().decode(Discovery.self, from: data)
+                guard discovery.issuer == "https://auth.openai.com" else { throw RevocationFailure.invalidEndpoint }
+                let endpoint = try Self.validatedRevocationEndpoint(discovery.revocation_endpoint)
+                var request = URLRequest(url: endpoint)
+                request.httpMethod = "POST"; request.timeoutInterval = 10
+                request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+                request.httpBody = OAuthTools.form(["token": refresh, "token_type_hint": "refresh_token", "client_id": credential.clientID])
+                let (_, response) = try await session.data(for: request)
+                // The documented success response is an empty HTTP 200, not JSON.
+                try Self.checkRevocationStatus(response)
+                return
+            } catch {
+                let retryable = (error as? RevocationFailure) == .temporary ||
+                    ((error as? URLError).map { ![.cancelled, .badURL, .unsupportedURL].contains($0.code) } ?? false)
+                guard retryable, attempt < 2 else { throw error }
+                try await Task.sleep(for: .milliseconds(300 * (attempt + 1)))
+            }
+        }
+    }
+    enum RevocationFailure: Error, Equatable { case temporary, rejected, invalidEndpoint }
+    static func validatedRevocationEndpoint(_ address: String) throws -> URL {
+        guard let url = URL(string: address), url.scheme == "https", url.host == "auth.openai.com",
+              url.user == nil, url.password == nil, url.fragment == nil, url.query == nil,
+              url.port == nil || url.port == 443 else { throw RevocationFailure.invalidEndpoint }
+        return url
+    }
+    private static func checkRevocationStatus(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse else { throw RevocationFailure.rejected }
+        guard http.statusCode != 200 else { return }
+        throw http.statusCode >= 500 ? RevocationFailure.temporary : RevocationFailure.rejected
     }
     func token(_ form: [String: String]) async throws -> TokenReply {
         var request = URLRequest(url: URL(string: "https://auth.openai.com/api/accounts/oauth/token")!)

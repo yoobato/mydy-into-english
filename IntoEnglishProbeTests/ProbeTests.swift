@@ -148,3 +148,110 @@ private final class HTTPFixture {
     }
     func stop() { listener.cancel(); for connection in connections { connection.cancel() } }
 }
+
+private final class RevocationStub: URLProtocol {
+    static var handler: ((URLRequest) throws -> (Int, Data))?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        do {
+            let (status, data) = try Self.handler!(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() {}
+}
+
+final class SessionRevocationTests: XCTestCase {
+    private let discovery = Data(#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://auth.openai.com/oauth/revoke"}"#.utf8)
+    private var credential: Credentials {
+        Credentials(clientID: "oaiapp_synthetic", subject: "synthetic-session-test", email: "session@example.invalid", accessToken: "synthetic-access", refreshToken: "synthetic-refresh", idToken: "synthetic-id", scopes: ["chatgpt.tokens.use.direct"], expiresAt: .distantFuture)
+    }
+    private func api() -> PlanAPI {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RevocationStub.self]
+        return PlanAPI(session: URLSession(configuration: configuration))
+    }
+    private func body(_ request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open(); defer { stream.close() }
+        var data = Data(), buffer = [UInt8](repeating: 0, count: 1024)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }; data.append(contentsOf: buffer.prefix(count))
+        }
+        return data
+    }
+    override func tearDown() { RevocationStub.handler = nil; super.tearDown() }
+    func testRevocationAcceptsEmpty200AndPostsOnlyToTrustedEndpoint() async throws {
+        var calls = 0
+        RevocationStub.handler = { request in
+            calls += 1
+            if calls == 1 { return (200, self.discovery) }
+            XCTAssertEqual(request.url?.absoluteString, "https://auth.openai.com/oauth/revoke")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertNil(request.url?.query)
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            XCTAssertEqual(self.body(request), OAuthTools.form(["token": "synthetic-refresh", "token_type_hint": "refresh_token", "client_id": "oaiapp_synthetic"]))
+            return (200, Data())
+        }
+        try await api().revokeSession(credential)
+        XCTAssertEqual(calls, 2)
+    }
+    func testRevocationRetriesTemporaryFailure() async throws {
+        var posts = 0
+        RevocationStub.handler = { request in
+            if request.httpMethod != "POST" { return (200, self.discovery) }
+            posts += 1
+            return (posts == 1 ? 503 : 200, Data())
+        }
+        try await api().revokeSession(credential)
+        XCTAssertEqual(posts, 2)
+    }
+    func testRevocationRejectsUntrustedEndpointBeforeSendingToken() async {
+        var calls = 0
+        RevocationStub.handler = { _ in
+            calls += 1
+            return (200, Data(#"{"issuer":"https://auth.openai.com","revocation_endpoint":"https://untrusted.example/revoke"}"#.utf8))
+        }
+        do { try await api().revokeSession(credential); XCTFail("Untrusted endpoint accepted") }
+        catch { XCTAssertEqual(calls, 1) }
+        for address in ["http://auth.openai.com/revoke", "https://auth.openai.com@untrusted.example/revoke", "https://auth.openai.com/revoke?token=secret", "https://auth.openai.com:444/revoke"] {
+            XCTAssertThrowsError(try PlanAPI.validatedRevocationEndpoint(address))
+        }
+    }
+    @MainActor
+    func testDisconnectKeepsCredentialsOnFailureAndRegistrationAfterSuccess() async throws {
+        let priorAccount = try Vault.read(Credentials.self, key: "account")
+        let priorRegistrations = try Vault.read([AccountRegistration].self, key: "registrations")
+        defer {
+            if let priorAccount { try? Vault.save(priorAccount, key: "account") } else { try? Vault.delete("account") }
+            if let priorRegistrations { try? Vault.save(priorRegistrations, key: "registrations") } else { try? Vault.delete("registrations") }
+        }
+        let model = ProbeModel(loadSavedAccount: false, api: api())
+        model.credentials = credential
+        try Vault.save(credential, key: "account")
+        var reject = true
+        RevocationStub.handler = { request in
+            if request.httpMethod != "POST" { return (200, self.discovery) }
+            return (reject ? 400 : 200, Data())
+        }
+        await model.disconnect()
+        XCTAssertNotNil(model.credentials)
+        XCTAssertNotNil(try Vault.read(Credentials.self, key: "account"))
+        XCTAssertNotNil(model.error)
+        reject = false
+        await model.disconnect()
+        XCTAssertNil(model.credentials)
+        XCTAssertNil(try Vault.read(Credentials.self, key: "account"))
+        XCTAssertEqual(model.rememberedRegistration?.clientID, credential.clientID)
+        XCTAssertEqual(model.rememberedRegistration?.subject, credential.subject)
+        let registrationData = try JSONEncoder().encode(model.registrations)
+        XCTAssertFalse(String(decoding: registrationData, as: UTF8.self).contains("synthetic-refresh"))
+        XCTAssertNil(model.error)
+    }
+}

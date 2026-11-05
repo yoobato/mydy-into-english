@@ -69,13 +69,18 @@ enum ExampleCatalog {
 }
 
 enum EnglishRegion: String, Codable, CaseIterable, Identifiable {
-    case us, uk, canada, australia, neutral
+    case us, uk, canada, australia
     var id: String { rawValue }
     var title: String {
-        switch self { case .us: return "미국"; case .uk: return "영국"; case .canada: return "캐나다"; case .australia: return "호주"; case .neutral: return "지역 중립" }
+        switch self { case .us: return "미국"; case .uk: return "영국"; case .canada: return "캐나다"; case .australia: return "호주" }
     }
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: raw) ?? .us
+    }
+    static func storedPreference(_ raw: String?) -> Self { raw.flatMap(Self.init(rawValue:)) ?? .us }
     var emoji: String {
-        switch self { case .us: return "🇺🇸"; case .uk: return "🇬🇧"; case .canada: return "🇨🇦"; case .australia: return "🇦🇺"; case .neutral: return "🌐" }
+        switch self { case .us: return "🇺🇸"; case .uk: return "🇬🇧"; case .canada: return "🇨🇦"; case .australia: return "🇦🇺" }
     }
     var selectionTitle: String { "\(emoji) \(title)" }
     var summary: String {
@@ -84,7 +89,6 @@ enum EnglishRegion: String, Codable, CaseIterable, Identifiable {
         case .uk: return "영국식 철자·표현·어투"
         case .canada: return "캐나다식 철자·표현·어투"
         case .australia: return "호주식 철자·표현·어투"
-        case .neutral: return "지역 특유의 속어를 피한, 두루 통하는 영어"
         }
     }
     var instruction: String {
@@ -93,11 +97,10 @@ enum EnglishRegion: String, Codable, CaseIterable, Identifiable {
         case .uk: return "Use British English spelling, vocabulary, idiom, and local conversational register (directness, politeness, understatement) appropriate to context; avoid stereotypes or forced slang."
         case .canada: return "Use Canadian English spelling, vocabulary, idiom, and local conversational register (directness, politeness, understatement) appropriate to context; avoid stereotypes or forced slang."
         case .australia: return "Use Australian English spelling, vocabulary, idiom, and local conversational register (directness, politeness, understatement) appropriate to context; avoid stereotypes or forced slang."
-        case .neutral: return "Use internationally clear English with neutral conversational register; avoid regional slang."
         }
     }
     var voice: String {
-        switch self { case .us, .neutral: return "en-US"; case .uk: return "en-GB"; case .canada: return "en-CA"; case .australia: return "en-AU" }
+        switch self { case .us: return "en-US"; case .uk: return "en-GB"; case .canada: return "en-CA"; case .australia: return "en-AU" }
     }
 }
 
@@ -293,7 +296,7 @@ final class StudyStore: ObservableObject {
     @Published var mode: LearningMode = .sentence { didSet { if oldValue != mode { refreshExamples(for: mode) } } }
     @Published private(set) var examples: [LearningMode: [PracticeExample]] = [:]
     @Published var mood: WritingMood = .casual
-    @Published var region = EnglishRegion(rawValue: UserDefaults.standard.string(forKey: "english.region") ?? "us") ?? .us {
+    @Published var region = EnglishRegion.storedPreference(UserDefaults.standard.string(forKey: "english.region")) {
         didSet { UserDefaults.standard.set(region.rawValue, forKey: "english.region") }
     }
     @Published var effort = ReasoningEffort(rawValue: UserDefaults.standard.string(forKey: "reasoning.effort") ?? "low") ?? .low {

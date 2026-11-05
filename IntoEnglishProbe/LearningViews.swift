@@ -136,6 +136,10 @@ struct IntoEnglishView: View {
                             .padding(.horizontal, 16).padding(.vertical, 16).frame(maxWidth: .infinity)
                             .background(EnglishTheme.ink, in: RoundedRectangle(cornerRadius: 14)).foregroundStyle(.white)
                     }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("chatgpt-sign-in")
+                    if auth.rememberedRegistration != nil {
+                        Button("다른 ChatGPT 계정으로 시작하기") { Task { await auth.signIn(newAccount: true) } }
+                            .font(.caption).foregroundStyle(EnglishTheme.muted).disabled(busy)
+                    }
                     if auth.busy { ProgressView("계정 연결 중…").font(.caption).tint(EnglishTheme.coral) }
                     if let error = auth.error { Text(error).font(.footnote).foregroundStyle(.red).textSelection(.enabled) }
                     VStack(spacing: 8) {
@@ -162,7 +166,7 @@ struct IntoEnglishView: View {
             }.accessibilityLabel("Into English")
             Spacer()
             Button { composerFocused = false; showSaved = true } label: { Image(systemName: "bookmark").font(.system(size: 17)) }.accessibilityLabel("저장한 표현")
-            Button { composerFocused = false; showSettings = true } label: { Image(systemName: "person.crop.circle").font(.system(size: 20)) }
+            Button { composerFocused = false; showSettings = true } label: { Image(systemName: "gearshape").font(.system(size: 20)) }
                 .accessibilityLabel("계정과 모델 설정")
         }.padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 20)
     }
@@ -300,16 +304,14 @@ struct IntoEnglishView: View {
                 }
             }.padding(15).background(.white, in: RoundedRectangle(cornerRadius: 15))
                 .overlay(RoundedRectangle(cornerRadius: 15).stroke(composerFocused ? EnglishTheme.coral.opacity(0.6) : EnglishTheme.line, lineWidth: 0.8))
-            HStack(spacing: 4) {
-                Circle().fill(signedIn ? Color(red: 0.55, green: 0.65, blue: 0.43) : EnglishTheme.muted).frame(width: 4, height: 4)
-                Text(signedIn ? "ChatGPT 연결됨" : "ChatGPT 계정 연결 필요").font(.system(size: 8))
-                if signedIn {
-                    Text("·")
+            if signedIn {
+                HStack {
                     Text("\(auth.models.first(where: { $0.slug == auth.selectedModel })?.display_name ?? "모델 확인 중") · \(store.effort.effective(for: auth.selectedModel).title)")
+                        .font(.system(size: 8)).foregroundStyle(EnglishTheme.muted)
                         .lineLimit(1).minimumScaleFactor(0.8).accessibilityIdentifier("active-ai-configuration")
+                    Spacer()
                 }
-                Spacer()
-            }.font(.system(size: 8)).foregroundStyle(EnglishTheme.muted)
+            }
         }.padding(.horizontal, 20).padding(.top, 13).padding(.bottom, 9).background(EnglishTheme.background.shadow(color: .black.opacity(0.04), radius: 8, y: -4))
             .overlay(alignment: .top) { Rectangle().fill(EnglishTheme.line).frame(height: 1) }
     }
@@ -483,7 +485,10 @@ struct AccountSettings: View {
                                 .accessibilityLabel("ChatGPT").accessibilityIdentifier("chatgpt-account-icon")
                             Text(account.email).lineLimit(1).truncationMode(.middle)
                             Spacer(minLength: 8)
-                            Button("연결 해제", role: .destructive) { confirmDisconnect = true }
+                            Button(role: .destructive) { confirmDisconnect = true } label: {
+                                if auth.isDisconnecting { ProgressView().controlSize(.small).accessibilityLabel("연결 해제 중") }
+                                else { Text("연결 해제") }
+                            }
                                 .font(.caption).buttonStyle(.borderless).disabled(auth.busy || locked)
                                 .accessibilityIdentifier("account-disconnect")
                         }
@@ -548,8 +553,8 @@ struct AccountSettings: View {
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { dismiss() } } }
                 .alert("이 기기의 계정 연결을 해제할까요?", isPresented: $confirmDisconnect) {
                     Button("취소", role: .cancel) {}
-                    Button("연결 해제", role: .destructive) { auth.disconnect() }
-                } message: { Text("이 기기에서 로그아웃하며, 대화 기록은 남습니다. ChatGPT 설정에서는 Into English의 계정 사용 허용도 해제할 수 있습니다.") }
+                    Button("연결 해제", role: .destructive) { Task { await auth.disconnect() } }
+                } message: { Text("이 기기의 로그인과 ChatGPT 연결 세션을 함께 해제합니다. 다시 사용하려면 로그인해야 하며, 대화 기록은 기기에 남습니다.") }
         }
         .sheet(item: $aiSelection) { selection in
             NavigationStack {

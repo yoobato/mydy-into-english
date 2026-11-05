@@ -198,4 +198,12 @@ final class LearningTests: XCTestCase {
         }
     }
 
+    func testRemovedRegionMigratesToAmerica() throws {
+        XCTAssertEqual(EnglishRegion.allCases.count, 4)
+        XCTAssertEqual(EnglishRegion.storedPreference(nil), .us)
+        XCTAssertEqual(EnglishRegion.storedPreference("neutral"), .us)
+        XCTAssertEqual(EnglishRegion.storedPreference("uk"), .uk)
+        XCTAssertEqual(try JSONDecoder().decode(EnglishRegion.self, from: Data(#""neutral""#.utf8)), .us)
+    }
+
 }

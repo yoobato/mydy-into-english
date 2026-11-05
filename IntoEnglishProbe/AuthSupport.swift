@@ -70,6 +70,16 @@ struct Credentials: Codable {
     var permitsInference: Bool { scopes.contains("chatgpt.tokens.use.direct") }
 }
 
+/// Registration metadata survives sign-out; it contains no authorization tokens.
+struct AccountRegistration: Codable {
+    let clientID: String
+    let subject: String
+    let email: String
+    init(_ credential: Credentials) {
+        clientID = credential.clientID; subject = credential.subject; email = credential.email
+    }
+}
+
 enum Vault {
     private static let service = "kr.mydy.intoenglish.probe"
     static func read<T: Decodable>(_ type: T.Type, key: String) throws -> T? {
