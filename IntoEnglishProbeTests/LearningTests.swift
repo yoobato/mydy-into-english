@@ -20,10 +20,10 @@ final class LearningTests: XCTestCase {
     func testClarificationRetainsOriginalAndFollowupAsSeparateRoles() throws {
         let question = #"{"kind":"clarification","text":"","meaning":"","pronunciation":"","partOfSpeech":"","explanation":"문맥에 따라 뜻이 달라요","example":null,"alternatives":[],"changes":[],"question":"어떤 뜻인가요?","choices":["참여할게","우울해"]}"#
         let reply = try LearningReply.decode(question)
-        let request = StudyRequest(mode: .sentence, mood: .friendly, history: [
+        let request = StudyRequest(mode: .sentence, mood: .polite, history: [
             StudyMessage(text: "I'm down.", mood: .casual),
             StudyMessage(text: "", reply: reply, mood: .casual),
-            StudyMessage(text: "좋아, 나도 같이 할게", mood: .friendly)
+            StudyMessage(text: "좋아, 나도 같이 할게", mood: .polite)
         ])
         XCTAssertEqual(request.input.map { $0["role"]! }, ["user", "assistant", "user"])
         XCTAssertTrue(request.input[0]["content"]!.contains("I'm down."))
@@ -52,9 +52,9 @@ final class LearningTests: XCTestCase {
     func testRegionIsIncludedInEveryModeWithoutChangingUserInput() {
         for mode in LearningMode.allCases {
             for region in EnglishRegion.allCases {
-                let request = StudyRequest(mode: mode, mood: .business, history: [StudyMessage(text: "colour", mood: .business)], region: region)
+                let request = StudyRequest(mode: mode, mood: .formal, history: [StudyMessage(text: "colour", mood: .formal)], region: region)
                 XCTAssertTrue(request.instructions.contains(region.instruction))
-                XCTAssertTrue(request.instructions.contains("Current writing mood: business"))
+                if mode == .sentence { XCTAssertTrue(request.instructions.contains("Formal, professional tone")) }
                 XCTAssertTrue(request.input[0]["content"]!.contains("colour"))
             }
         }
@@ -107,6 +107,44 @@ final class LearningTests: XCTestCase {
         XCTAssertTrue(relaunched.chats.isEmpty)
         XCTAssertNil(relaunched.archive.usage)
         XCTAssertNil(relaunched.archive.lastRequest)
+    }
+
+    func testCompactPromptsRetainGrammarIntentAndRegionalRegister() {
+        for mode in LearningMode.allCases {
+            for mood in WritingMood.allCases {
+                let request = StudyRequest(mode: mode, mood: mood, history: [], region: .canada)
+                XCTAssertLessThan(request.instructions.count, 1900)
+                XCTAssertTrue(request.instructions.contains("local conversational register"))
+                XCTAssertTrue(request.instructions.contains("invent no context"))
+                if mode == .sentence {
+                    XCTAssertTrue(request.instructions.contains("Correct grammar"))
+                    XCTAssertTrue(request.instructions.contains(mood.instruction))
+                    XCTAssertTrue(request.instructions.contains("korean_intent"))
+                }
+            }
+        }
+    }
+    func testCompactReplyAndLegacyMoodArchiveMigration() throws {
+        let reply = try LearningReply.decode(#"{"kind":"sentence","text":"She doesn't like coffee.","meaning":"그녀는 커피를 좋아하지 않아요","explanation":"주어에 맞게 동사를 교정했어요"}"#)
+        XCTAssertEqual(reply.text, "She doesn't like coffee.")
+        XCTAssertTrue(reply.changes.isEmpty)
+        let history = try JSONSerialization.jsonObject(with: Data(reply.serialized.utf8)) as! [String: Any]
+        XCTAssertNil(history["alternatives"])
+        XCTAssertNil(history["pronunciation"])
+        XCTAssertEqual(try LearningReply.decode(reply.serialized), reply)
+        XCTAssertNil(reply.example)
+        XCTAssertEqual(try JSONDecoder().decode(WritingMood.self, from: Data(#""friendly""#.utf8)), .polite)
+        XCTAssertEqual(try JSONDecoder().decode(WritingMood.self, from: Data(#""business""#.utf8)), .formal)
+        XCTAssertEqual(WritingMood.allCases.map(\.title), ["캐주얼", "공손하게", "격식있게"])
+    }
+    func testExamplesRefreshWithoutRepeatingPreviousSet() {
+        for mode in LearningMode.allCases {
+            let first = ExampleCatalog.pick(for: mode, excluding: [])
+            let second = ExampleCatalog.pick(for: mode, excluding: Set(first.map(\.id)))
+            XCTAssertEqual(first.count, 3)
+            XCTAssertEqual(second.count, 3)
+            XCTAssertTrue(Set(first.map(\.id)).isDisjoint(with: second.map(\.id)))
+        }
     }
 
 }
