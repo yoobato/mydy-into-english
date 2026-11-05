@@ -172,15 +172,30 @@ final class LearningTests: XCTestCase {
         let sol = ModelChoice(slug: "gpt-6.1-sol", display_name: "Sol", visibility: "list")
         let other = ModelChoice(slug: "gpt-6-future", display_name: "Future", visibility: "list")
         XCTAssertEqual(AIConfiguration.recommendedModel(in: [other, sol]), sol.slug)
-        XCTAssertNil(AIConfiguration.recommendedModel(in: [other]))
+        XCTAssertEqual(AIConfiguration.recommendedModel(in: [other]), other.slug)
         XCTAssertNil(AIConfiguration.recommendedModel(in: []))
         XCTAssertEqual(ReasoningEffort.recommended(for: sol.slug), .low)
         XCTAssertTrue(ReasoningEffort.choices(for: sol.slug).contains(.low))
         XCTAssertEqual(ReasoningEffort.choices(for: other.slug), [.automatic])
-        XCTAssertNil(ReasoningEffort.recommended(for: other.slug))
+        XCTAssertEqual(ReasoningEffort.recommended(for: other.slug), .automatic)
         XCTAssertNil(ReasoningEffort.high.value(for: other.slug))
         XCTAssertEqual(ReasoningEffort.high.effective(for: other.slug), .automatic)
         XCTAssertNil(ReasoningEffort.low.value(for: "gpt-6.1-sol-pro"))
+    }
+
+    func testRecommendationFallsBackWithinEachAccountCatalog() {
+        func choice(_ slug: String) -> ModelChoice { ModelChoice(slug: slug, display_name: slug, visibility: "list") }
+        let astra = choice("gpt-6-astra"), terra = choice("gpt-6.1-terra"), luna = choice("gpt-6-luna")
+        XCTAssertEqual(AIConfiguration.recommendedModel(in: [astra, terra]), terra.slug)
+        XCTAssertEqual(AIConfiguration.recommendedModel(in: [astra, luna]), luna.slug)
+        XCTAssertEqual(AIConfiguration.recommendedModel(in: [astra]), astra.slug)
+        XCTAssertEqual(AIConfiguration.choose([astra, luna], preferred: astra.slug), astra.slug)
+        XCTAssertEqual(AIConfiguration.choose([astra, luna], preferred: "missing"), luna.slug)
+        for model in [astra, terra, luna] {
+            let recommended = ReasoningEffort.recommended(for: model.slug)
+            XCTAssertEqual(recommended, .low)
+            XCTAssertTrue(ReasoningEffort.choices(for: model.slug).contains(recommended!))
+        }
     }
 
 }

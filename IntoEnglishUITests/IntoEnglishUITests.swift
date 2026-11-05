@@ -3,7 +3,7 @@ import XCTest
 final class IntoEnglishUITests: XCTestCase {
     func testLearningModesAndAccountSettings() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-testing"]
+        app.launchArguments = ["--ui-testing", "--ui-testing-signed-in"]
         app.launch()
         XCTAssertTrue(app.buttons["문장 다듬기"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.textFields["learning-input"].exists || app.textViews["learning-input"].exists)
@@ -81,6 +81,26 @@ final class IntoEnglishUITests: XCTestCase {
         XCTAssertTrue(alert.waitForExistence(timeout: 3))
         alert.buttons["취소"].tap()
         XCTAssertTrue(app.staticTexts["test@example.invalid"].exists)
+        disconnect.tap()
+        alert.buttons["연결 해제"].tap()
+        XCTAssertTrue(app.buttons["chatgpt-sign-in"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["mode-word"].isHittable)
+    }
+
+    func testSignedOutShowsLoginOverBlockedMainScreen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-testing"]
+        app.launch()
+        let signIn = app.buttons["chatgpt-sign-in"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 5))
+        XCTAssertTrue(signIn.label.contains("ChatGPT 계정으로 시작하기"))
+        XCTAssertTrue(signIn.isHittable)
+        XCTAssertFalse(app.buttons["mode-word"].isHittable)
+        XCTAssertFalse(app.buttons["Continue with ChatGPT"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Login screen"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
 }

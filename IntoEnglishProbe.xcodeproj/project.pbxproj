@@ -11,6 +11,7 @@
 		252BB36D77136ED18B198E4E /* ProbeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F54AB3571B51C5FD0C27C611 /* ProbeModel.swift */; };
 		318CDA8E9C66C9F4D91340AC /* LearningViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F85B2BF372B6CEFC8DE7D906 /* LearningViews.swift */; };
 		3DA6068EA4E025AAA9D36E68 /* LearningModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39ED8C599906E226602324CE /* LearningModels.swift */; };
+		5462B014C90B6B142450FD3F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 0483EEFB13EA41E47065D406 /* LaunchScreen.storyboard */; };
 		5771937EAC59C705F8570950 /* PlanAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68223D730006ACD1DCF51214 /* PlanAPI.swift */; };
 		5B40A82F336ADEFDD57DD941 /* LoopbackListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC9AA439DC7B234EF10F4374 /* LoopbackListener.swift */; };
 		95E0312770504740354E6EB5 /* LearningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 654BA35182263CA153A9DC81 /* LearningTests.swift */; };
@@ -38,6 +39,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0483EEFB13EA41E47065D406 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		07EF6CDB0527AD233DF580BF /* IntoEnglishUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntoEnglishUITests.swift; sourceTree = "<group>"; };
 		39ED8C599906E226602324CE /* LearningModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LearningModels.swift; sourceTree = "<group>"; };
 		4FEE4756F54D0C18890BFE33 /* ProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeTests.swift; sourceTree = "<group>"; };
@@ -63,6 +65,7 @@
 				52D9376FACE36CFE4F979B91 /* AuthSupport.swift */,
 				7EE6016D52CD7AD5A55F6343 /* Info.plist */,
 				5755AB6A29D34BD6773930A0 /* IntoEnglishProbeApp.swift */,
+				0483EEFB13EA41E47065D406 /* LaunchScreen.storyboard */,
 				39ED8C599906E226602324CE /* LearningModels.swift */,
 				F85B2BF372B6CEFC8DE7D906 /* LearningViews.swift */,
 				AC9AA439DC7B234EF10F4374 /* LoopbackListener.swift */,
@@ -219,6 +222,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B74E2A2E0799137929FB1B69 /* Assets.xcassets in Resources */,
+				5462B014C90B6B142450FD3F /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

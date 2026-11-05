@@ -96,12 +96,12 @@ enum ReasoningEffort: String, CaseIterable, Identifiable {
     }
     // Only expose explicitly documented models, not arbitrary future/pro variants.
     static func choices(for model: String) -> [Self] {
-        let known = ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna",
+        let known = ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna",
                      "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
         return known.contains(model) ? allCases : [.automatic]
     }
     static func supports(_ model: String) -> Bool { choices(for: model).count > 1 }
-    static func recommended(for model: String) -> Self? { supports(model) ? .low : nil }
+    static func recommended(for model: String) -> Self? { model.isEmpty ? nil : (supports(model) ? .low : .automatic) }
     func effective(for model: String) -> Self { Self.choices(for: model).contains(self) ? self : .automatic }
     func value(for model: String) -> String? {
         let effective = effective(for: model)
@@ -113,12 +113,15 @@ enum AIConfiguration {
     static let modelName = "GPT-6.1 Sol"
     static let reasoningEffort = "low"
     static func recommendedModel(in models: [ModelChoice]) -> String? {
-        models.first(where: { $0.slug == model })?.slug
+        // Short translation/editing: balance quality, responsiveness, and allowance.
+        let priority = [model, "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra",
+                        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+        return priority.first(where: { candidate in models.contains { $0.slug == candidate } })
+            ?? models.first?.slug
     }
     static func choose(_ models: [ModelChoice], preferred: String?) -> String {
         models.first(where: { $0.slug == preferred })?.slug
-            ?? models.first(where: { $0.slug == model })?.slug
-            ?? models.first?.slug ?? ""
+            ?? recommendedModel(in: models) ?? ""
     }
     static func validate(_ models: [ModelChoice], selected: String = model) throws {
         guard models.contains(where: { $0.slug == selected }) else {

@@ -45,6 +45,8 @@ struct IntoEnglishView: View {
     @State private var drafts: [LearningMode: String] = [:]
     @State private var koreanDraft = ""
     @State private var toast: String?
+    @State private var showSplash = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var composerFocused: Bool
     private var draft: Binding<String> { Binding(get: { drafts[store.mode] ?? "" }, set: { drafts[store.mode] = $0 }) }
     private var signedIn: Bool { auth.credentials?.permitsInference == true }
@@ -98,6 +100,19 @@ struct IntoEnglishView: View {
                 .background(EnglishTheme.ink, in: Capsule()).foregroundStyle(.white).padding(.top, 65)
                 .transition(.move(edge: .top).combined(with: .opacity)).allowsHitTesting(false) }
         }
+        .blur(radius: signedIn ? 0 : 7)
+        .allowsHitTesting(signedIn && !showSplash)
+        .accessibilityHidden(!signedIn || showSplash)
+        .overlay { if !signedIn && !showSplash { loginOverlay } }
+        .overlay { if showSplash { SplashView().accessibilityIdentifier("splash-screen") } }
+        .task {
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { showSplash = false }
+        }
+        .onChange(of: signedIn) { _, connected in
+            if !connected { showSettings = false; showSaved = false; showHistory = false; composerFocused = false }
+        }
         .sheet(isPresented: $showSettings) { AccountSettings(auth: auth, store: store, draft: draft.wrappedValue, korean: koreanDraft, locked: store.isSending, onSignIn: {
             showSettings = false
             Task { try? await Task.sleep(for: .milliseconds(400)); await auth.signIn() }
@@ -112,6 +127,34 @@ struct IntoEnglishView: View {
             if signedIn && auth.models.isEmpty { await auth.loadModels() }
         }
         .tint(EnglishTheme.coral)
+    }
+    private var loginOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.16).ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 22) {
+                    Image("BrandMark").resizable().scaledToFit().frame(width: 68, height: 68)
+                        .clipShape(RoundedRectangle(cornerRadius: 16)).accessibilityHidden(true)
+                    VStack(spacing: 10) {
+                        Text("Into English").font(.system(size: 28, weight: .semibold, design: .serif))
+                        Text("ChatGPT 계정을 연결해 주세요.").font(.subheadline).foregroundStyle(EnglishTheme.muted)
+                    }
+                    Button { composerFocused = false; Task { await auth.signIn() } } label: {
+                        ChatGPTSignInLabel()
+                            .padding(.horizontal, 16).padding(.vertical, 16).frame(maxWidth: .infinity)
+                            .background(EnglishTheme.ink, in: RoundedRectangle(cornerRadius: 14)).foregroundStyle(.white)
+                    }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("chatgpt-sign-in")
+                    if auth.busy { ProgressView("계정 연결 중…").font(.caption).tint(EnglishTheme.coral) }
+                    if let error = auth.error { Text(error).font(.footnote).foregroundStyle(.red).textSelection(.enabled) }
+                    Text("입력한 내용은 답변 생성을 위해 OpenAI로 전송됩니다.")
+                        .font(.caption).foregroundStyle(EnglishTheme.muted).multilineTextAlignment(.center)
+                }
+                .padding(28).frame(maxWidth: 380)
+                .background(EnglishTheme.background, in: RoundedRectangle(cornerRadius: 28))
+                .shadow(color: .black.opacity(0.1), radius: 25, y: 12)
+                .padding(24).frame(maxWidth: .infinity)
+            }.defaultScrollAnchor(.center)
+        }.foregroundStyle(EnglishTheme.ink).accessibilityIdentifier("login-screen")
     }
     private var header: some View {
         HStack(spacing: 12) {
@@ -262,13 +305,6 @@ struct IntoEnglishView: View {
                 }
             }.padding(15).background(.white, in: RoundedRectangle(cornerRadius: 15))
                 .overlay(RoundedRectangle(cornerRadius: 15).stroke(composerFocused ? EnglishTheme.coral.opacity(0.6) : EnglishTheme.line, lineWidth: 0.8))
-            if !signedIn {
-                Button { composerFocused = false; Task { await auth.signIn() } } label: {
-                    HStack { Image(systemName: "person.crop.circle"); Text("Continue with ChatGPT"); Spacer(); Image(systemName: "arrow.up.right") }
-                        .font(.system(size: 12, weight: .semibold)).padding(.horizontal, 15).padding(.vertical, 13)
-                        .frame(maxWidth: .infinity).background(EnglishTheme.ink, in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(.white)
-                }.buttonStyle(.plain).disabled(busy)
-            }
             HStack(spacing: 4) {
                 Circle().fill(signedIn ? Color(red: 0.55, green: 0.65, blue: 0.43) : EnglishTheme.muted).frame(width: 4, height: 4)
                 Text(signedIn ? "ChatGPT 연결됨" : "ChatGPT 계정 연결 필요").font(.system(size: 8))
@@ -451,7 +487,7 @@ struct AccountSettings: View {
                         }
                     } else { Text("아직 연결된 계정이 없어요.").foregroundStyle(EnglishTheme.muted) }
                     if auth.credentials == nil || auth.credentials?.permitsInference == false {
-                        Button("Continue with ChatGPT", action: onSignIn).disabled(auth.busy || locked)
+                        Button(action: onSignIn) { ChatGPTSignInLabel() }.disabled(auth.busy || locked)
                     }
                 }
                 Section("영어 설정") {
@@ -484,7 +520,9 @@ struct AccountSettings: View {
                                 }
                             }.accessibilityIdentifier("ai-reasoning").disabled(auth.busy || locked)
                         } else {
-                            LabeledContent("추론 강도", value: "모델 기본값")
+                            LabeledContent("추론 강도") {
+                                choiceLabel("모델 기본값", recommended: currentModel != nil)
+                            }
                             Text("지원 범위가 확인되지 않은 모델은 기본 추론 강도로 요청합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
                         }
                         Button("모델 목록 새로고침") { Task { await auth.loadModels() } }.disabled(auth.busy || locked)
