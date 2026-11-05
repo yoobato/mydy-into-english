@@ -304,12 +304,14 @@ final class StudyStore: ObservableObject {
     }
     @Published private(set) var activeIDs: [LearningMode: UUID] = [:]
     @Published private(set) var isSending = false
+    @Published private(set) var sendingMode: LearningMode?
     @Published var error: String?
     private var archiveURL: URL?
     private var account: String?
-    private let api = PlanAPI()
+    private let api: PlanAPI
     private let directory: URL?
-    init(directory: URL? = nil) {
+    init(directory: URL? = nil, api: PlanAPI = PlanAPI()) {
+        self.api = api
         #if DEBUG
         self.directory = ProcessInfo.processInfo.arguments.contains("--ui-testing-history") && ProcessInfo.processInfo.arguments.contains("--ui-testing")
             ? FileManager.default.temporaryDirectory.appendingPathComponent("history-ui-\(UUID().uuidString)") : directory
@@ -319,7 +321,7 @@ final class StudyStore: ObservableObject {
         for mode in LearningMode.allCases { refreshExamples(for: mode) }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-testing"),
-           ProcessInfo.processInfo.arguments.contains("--ui-testing-waiting") { isSending = true }
+           ProcessInfo.processInfo.arguments.contains("--ui-testing-waiting") { isSending = true; sendingMode = .sentence }
         #endif
     }
     func refreshExamples(for mode: LearningMode) {
@@ -352,6 +354,9 @@ final class StudyStore: ObservableObject {
                 second.messages = [StudyMessage(text: "테스트 대화 둘", mood: .casual)]
                 first.updatedAt = Date(); second.updatedAt = Date().addingTimeInterval(-1)
                 archive.chats = [first, second]
+                if let reply = try? LearningReply.decode(#"{"kind":"word","text":"test expression","meaning":"테스트 표현"}"#) {
+                    archive.saved = [SavedExpression(id: UUID(), reply: reply, mood: .casual, mode: .word, createdAt: Date())]
+                }
             }
             #endif
             // Rewrite migrated archives without the retired usage ledger; keep chats and saved expressions.
@@ -372,7 +377,6 @@ final class StudyStore: ObservableObject {
     }
     func open(_ chat: StudyChat) { guard !isSending else { return }; mode = chat.mode; activeIDs[chat.mode] = chat.id; error = nil }
     func deleteChat(_ id: UUID) { deleteChats([id]) }
-    func deleteAllChats() { deleteChats(Set(archive.chats.map(\.id))) }
     private func deleteChats(_ ids: Set<UUID>) {
         guard !isSending, !ids.isEmpty, archive.chats.contains(where: { ids.contains($0.id) }) else { return }
         var updated = archive
@@ -402,7 +406,15 @@ final class StudyStore: ObservableObject {
         else { archive.saved.insert(SavedExpression(id: UUID(), reply: reply, mood: message.mood, mode: reply.kind == .word ? .word : .sentence, createdAt: Date()), at: 0) }
         save()
     }
-    func removeSaved(_ id: UUID) { archive.saved.removeAll { $0.id == id }; save() }
+    func removeSaved(_ id: UUID) {
+        guard archive.saved.contains(where: { $0.id == id }) else { return }
+        var updated = archive; updated.saved.removeAll { $0.id == id }
+        do {
+            guard let archiveURL else { throw ProbeError("저장 위치를 확인하지 못했어요.") }
+            try JSONEncoder().encode(updated).write(to: archiveURL, options: [.atomic, .completeFileProtection])
+            archive = updated; error = nil
+        } catch { self.error = "저장한 표현을 삭제하지 못했어요. 다시 시도해 주세요." }
+    }
     func send(text: String, korean: String, auth: ProbeModel, retry: Bool = false) async {
         guard !isSending, !auth.busy, let subject = auth.credentials?.subject else { return }
         var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -411,8 +423,8 @@ final class StudyStore: ObservableObject {
         guard retry || !text.isEmpty else { return }
         guard text.count <= 2000, korean.count <= 2000 else { error = "2,000자 이내로 적어 주세요."; return }
         let requestMode = mode, requestMood = mood
-        error = nil; isSending = true
-        defer { isSending = false }
+        error = nil; isSending = true; sendingMode = requestMode
+        defer { isSending = false; sendingMode = nil }
         let chatID: UUID
         if let existing = activeIDs[mode] { chatID = existing }
         else { let chat = StudyChat(mode: mode); chatID = chat.id; archive.chats.insert(chat, at: 0); activeIDs[mode] = chat.id }

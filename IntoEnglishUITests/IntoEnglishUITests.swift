@@ -121,6 +121,11 @@ final class IntoEnglishUITests: XCTestCase {
         app.launchArguments = ["--ui-testing", "--ui-testing-signed-in", "--ui-testing-waiting"]
         app.launch()
         XCTAssertTrue(app.staticTexts["응답을 기다리는 중…"].waitForExistence(timeout: 5))
+        app.buttons["mode-word"].tap()
+        XCTAssertTrue(app.buttons["mode-word"].isSelected)
+        XCTAssertFalse(app.staticTexts["응답을 기다리는 중…"].exists)
+        app.buttons["mode-sentence"].tap()
+        XCTAssertTrue(app.staticTexts["응답을 기다리는 중…"].exists)
         app.buttons["최근 대화"].tap()
         XCTAssertTrue(app.navigationBars["대화 기록"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.buttons["새로운 대화"].isEnabled)
@@ -132,7 +137,7 @@ final class IntoEnglishUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["응답을 기다리는 중…"].exists)
     }
 
-    func testHistorySwipeDeletionAndConfirmedDeleteAll() {
+    func testHistorySwipeAndSavedExpressionDeletion() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-testing", "--ui-testing-signed-in", "--ui-testing-history"]
         app.launch()
@@ -152,16 +157,19 @@ final class IntoEnglishUITests: XCTestCase {
         app.navigationBars.buttons["닫기"].tap()
         XCTAssertFalse(app.staticTexts["테스트 대화 하나"].exists)
         app.buttons["최근 대화"].tap()
-        app.buttons["history-delete-all"].tap()
-        let alert = app.alerts["모든 대화를 삭제할까요?"]
-        XCTAssertTrue(alert.waitForExistence(timeout: 3))
-        alert.buttons["취소"].tap()
-        XCTAssertEqual(rows.count, 1)
-        app.buttons["history-delete-all"].tap()
-        alert.buttons["전체 삭제"].tap()
+        XCTAssertFalse(app.buttons["history-delete-all"].exists)
+        XCTAssertFalse(app.buttons["전체 삭제"].exists)
+        let remaining = rows.firstMatch
+        remaining.swipeLeft()
+        if delete.waitForExistence(timeout: 1) { delete.tap() }
         XCTAssertTrue(app.staticTexts["대화 기록이 없습니다."].waitForExistence(timeout: 3))
         XCTAssertEqual(rows.count, 0)
-        XCTAssertFalse(app.buttons["history-delete-all"].isEnabled)
+        app.navigationBars.buttons["닫기"].tap()
+        app.buttons["저장한 표현"].tap()
+        let removeSaved = app.buttons["저장한 표현 삭제"]
+        XCTAssertTrue(removeSaved.waitForExistence(timeout: 3))
+        removeSaved.tap()
+        XCTAssertTrue(app.staticTexts["아직 저장한 표현이 없어요"].waitForExistence(timeout: 3))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Deleted chat history"
         screenshot.lifetime = .keepAlways

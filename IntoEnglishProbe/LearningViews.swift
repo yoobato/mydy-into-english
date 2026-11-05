@@ -40,7 +40,6 @@ struct IntoEnglishView: View {
     @State private var showSettings = false
     @State private var showSaved = false
     @State private var showHistory = false
-    @State private var confirmDeleteAllChats = false
     @State private var showKorean = false
     @State private var showMood = false
     @State private var drafts: [LearningMode: String] = [:]
@@ -65,7 +64,7 @@ struct IntoEnglishView: View {
                                 messageView(message)
                             }
                         }
-                        if store.isSending {
+                        if store.isSending && store.sendingMode == store.mode {
                             HStack(spacing: 10) {
                                 companionMark
                                 ProgressView().tint(EnglishTheme.coral)
@@ -191,7 +190,7 @@ struct IntoEnglishView: View {
                     .accessibilityAddTraits(store.mode == mode ? .isSelected : [])
             }
         }.padding(4).background(EnglishTheme.line.opacity(0.4), in: RoundedRectangle(cornerRadius: 13))
-            .padding(.horizontal, 23).padding(.bottom, 8).disabled(busy)
+            .padding(.horizontal, 23).padding(.bottom, 8).disabled(auth.busy)
             .transaction { $0.animation = nil; $0.disablesAnimations = true }
     }
     private var welcome: some View {
@@ -341,8 +340,10 @@ struct IntoEnglishView: View {
                         ContentUnavailableView("아직 저장한 표현이 없어요", systemImage: "bookmark", description: Text("답변의 책갈피 버튼으로 저장할 수 있습니다."))
                     }
                     ForEach(store.archive.saved) { item in
-                        ReplyCard(reply: item.reply, mood: item.mood, saved: true, onSave: { store.removeSaved(item.id) }, onCopy: { copy(item.reply.text) }, onSpeak: { speak(item.reply) }, onChoice: { _ in })
+                        ReplyCard(reply: item.reply, mood: item.mood, saved: true, onSave: { store.removeSaved(item.id) }, onCopy: { copy(item.reply.text) }, onSpeak: { speak(item.reply) }, onChoice: { _ in }, onDelete: { store.removeSaved(item.id) })
+                            .accessibilityIdentifier("saved-expression-\(item.id)")
                     }
+                    if let error = store.error { Text(error).font(.footnote).foregroundStyle(.red) }
                 }.padding(22)
             }.background(EnglishTheme.background).navigationTitle("저장한 표현").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showSaved = false } } }
@@ -367,8 +368,8 @@ struct IntoEnglishView: View {
                             .accessibilityIdentifier("history-chat-\(chat.id)")
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) { withAnimation { store.deleteChat(chat.id) } } label: {
-                                    Label("삭제", systemImage: "trash")
-                                }.disabled(busy)
+                                    Image(systemName: "trash")
+                                }.labelStyle(.iconOnly).accessibilityLabel("삭제").disabled(busy)
                             }
                     }
                 }
@@ -376,17 +377,7 @@ struct IntoEnglishView: View {
             }.scrollContentBackground(.hidden).background(EnglishTheme.background)
                 .navigationTitle("대화 기록").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("전체 삭제", role: .destructive) { confirmDeleteAllChats = true }
-                            .disabled(busy || store.chats.isEmpty).accessibilityIdentifier("history-delete-all")
-                    }
                     ToolbarItem(placement: .confirmationAction) { Button("닫기") { showHistory = false } }
-                }
-                .alert("모든 대화를 삭제할까요?", isPresented: $confirmDeleteAllChats) {
-                    Button("취소", role: .cancel) {}
-                    Button("전체 삭제", role: .destructive) { store.deleteAllChats() }
-                } message: {
-                    Text("이 기기에 저장된 현재 계정의 대화를 모두 삭제합니다. 저장한 표현은 유지됩니다. 삭제한 대화는 복구할 수 없습니다.")
                 }
         }.tint(EnglishTheme.coral)
     }
@@ -400,6 +391,7 @@ struct ReplyCard: View {
     let onCopy: () -> Void
     let onSpeak: () -> Void
     let onChoice: (String) -> Void
+    var onDelete: (() -> Void)? = nil
     @State private var showChanges = true
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -464,8 +456,16 @@ struct ReplyCard: View {
                 HStack(spacing: 18) {
                     Button(action: onCopy) { Label("복사", systemImage: "square.on.square") }
                     Button(action: onSpeak) { Label("듣기", systemImage: "speaker.wave.2") }
-                    Button(action: onSave) { Image(systemName: saved ? "bookmark.fill" : "bookmark") }
-                        .foregroundStyle(saved ? EnglishTheme.coral : EnglishTheme.muted).accessibilityLabel(saved ? "저장 취소" : "표현 저장")
+                    if let onDelete {
+                        Button(action: onDelete) {
+                            Image(systemName: "trash").font(.system(size: 12))
+                                .foregroundStyle(.red).frame(width: 30, height: 30)
+                                .background(Color.red.opacity(0.07), in: Circle()).frame(width: 44, height: 44)
+                        }.accessibilityLabel("저장한 표현 삭제")
+                    } else {
+                        Button(action: onSave) { Image(systemName: saved ? "bookmark.fill" : "bookmark") }
+                            .foregroundStyle(saved ? EnglishTheme.coral : EnglishTheme.muted).accessibilityLabel(saved ? "저장 취소" : "표현 저장")
+                    }
                     Spacer(minLength: 2)
                     Text(reply.kind == .word ? "EN ↔ KR" : mood.title).font(.system(size: 9))
                 }.font(.system(size: 10)).foregroundStyle(EnglishTheme.muted).buttonStyle(.plain).padding(.horizontal, 18).padding(.vertical, 14)

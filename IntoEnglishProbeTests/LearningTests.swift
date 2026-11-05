@@ -237,7 +237,7 @@ final class LearningTests: XCTestCase {
         let relaunched = StudyStore(directory: directory)
         relaunched.switchAccount("first")
         XCTAssertEqual(relaunched.chats.count, 1)
-        store.deleteAllChats()
+        store.deleteChat(sentence.id)
         XCTAssertTrue(store.messages.isEmpty)
         XCTAssertTrue(store.activeIDs.isEmpty)
         relaunched.switchAccount("other"); relaunched.switchAccount("first")
@@ -246,6 +246,13 @@ final class LearningTests: XCTestCase {
         let other = try JSONDecoder().decode(StudyArchive.self, from: Data(contentsOf: path("other")))
         XCTAssertEqual(Set(other.chats.map(\.id)), Set([word.id, sentence.id]))
         XCTAssertEqual(other.saved.first?.reply.text, "apple")
+        let savedID = relaunched.archive.saved[0].id
+        relaunched.removeSaved(savedID)
+        XCTAssertTrue(relaunched.archive.saved.isEmpty)
+        let third = StudyStore(directory: directory); third.switchAccount("first")
+        XCTAssertTrue(third.archive.saved.isEmpty)
+        third.switchAccount("other")
+        XCTAssertEqual(third.archive.saved.count, 1)
     }
     @MainActor
     func testFailedDeletionDoesNotRemoveVisibleHistory() throws {
@@ -262,7 +269,7 @@ final class LearningTests: XCTestCase {
         let store = StudyStore(directory: directory); store.switchAccount(subject); store.open(chat)
         try FileManager.default.removeItem(at: file)
         try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
-        store.deleteAllChats()
+        store.deleteChat(chat.id)
         XCTAssertEqual(store.chats.count, 1)
         XCTAssertEqual(store.messages.first?.text, "keep on failure")
         XCTAssertNotNil(store.error)

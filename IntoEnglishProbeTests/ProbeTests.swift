@@ -151,15 +151,20 @@ private final class HTTPFixture {
 
 private final class RevocationStub: URLProtocol {
     static var handler: ((URLRequest) throws -> (Int, Data))?
+    static var deliveryDelay: TimeInterval = 0
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         do {
             let (status, data) = try Self.handler!(request)
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
+            let deliver = {
+                self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                self.client?.urlProtocol(self, didLoad: data)
+                self.client?.urlProtocolDidFinishLoading(self)
+            }
+            if Self.deliveryDelay > 0 { DispatchQueue.global().asyncAfter(deadline: .now() + Self.deliveryDelay, execute: deliver) }
+            else { deliver() }
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() {}
@@ -186,7 +191,7 @@ final class SessionRevocationTests: XCTestCase {
         }
         return data
     }
-    override func tearDown() { RevocationStub.handler = nil; super.tearDown() }
+    override func tearDown() { RevocationStub.handler = nil; RevocationStub.deliveryDelay = 0; super.tearDown() }
     func testRevocationAcceptsEmpty200AndPostsOnlyToTrustedEndpoint() async throws {
         var calls = 0
         RevocationStub.handler = { request in
@@ -254,4 +259,40 @@ final class SessionRevocationTests: XCTestCase {
         XCTAssertFalse(String(decoding: registrationData, as: UTF8.self).contains("synthetic-refresh"))
         XCTAssertNil(model.error)
     }
+    @MainActor
+    func testSwitchingTabsKeepsReplyInTheRequestConversation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mockAPI = api()
+        let auth = ProbeModel(loadSavedAccount: false, api: mockAPI)
+        auth.credentials = credential
+        auth.models = [ModelChoice(slug: AIConfiguration.model, display_name: AIConfiguration.modelName, visibility: "list")]
+        auth.selectedModel = AIConfiguration.model
+        let store = StudyStore(directory: directory, api: mockAPI)
+        store.switchAccount(credential.subject)
+        let received = expectation(description: "Inference request started")
+        RevocationStub.deliveryDelay = 0.3
+        RevocationStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/responses")
+            received.fulfill()
+            let reply = #"{"kind":"sentence","text":"Sounds good.","meaning":"좋아요."}"#
+            let response: [String: Any] = ["object": "response", "status": "completed", "output": [["content": [["type": "output_text", "text": reply]]]]]
+            return (200, try JSONSerialization.data(withJSONObject: response))
+        }
+        let request = Task { await store.send(text: "좋아요", korean: "", auth: auth) }
+        await fulfillment(of: [received], timeout: 3)
+        XCTAssertEqual(store.sendingMode, .sentence)
+        store.mode = .word
+        XCTAssertTrue(store.messages.isEmpty)
+        await request.value
+        XCTAssertNil(store.error)
+        XCTAssertTrue(store.messages.isEmpty)
+        XCTAssertFalse(store.isSending)
+        XCTAssertNil(store.sendingMode)
+        store.mode = .sentence
+        XCTAssertEqual(store.messages.last?.reply?.text, "Sounds good.")
+        XCTAssertEqual(store.chats.count, 1)
+        XCTAssertEqual(store.chats.first?.mode, .sentence)
+    }
+
 }
