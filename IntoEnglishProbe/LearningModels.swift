@@ -88,18 +88,14 @@ enum EnglishRegion: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum ReasoningEffort: String, Codable, CaseIterable, Identifiable {
-    case automatic, low, medium, high
-    var id: String { rawValue }
-    var title: String {
-        switch self { case .automatic: return "모델 기본값"; case .low: return "Light"; case .medium: return "Medium"; case .high: return "High" }
-    }
-    func value(for model: String) -> String? {
-        guard self != .automatic, Self.supports(model) else { return nil }
-        return rawValue
-    }
-    static func supports(_ model: String) -> Bool {
-        model.hasPrefix("gpt-6") || model.hasPrefix("gpt-5.6")
+enum AIConfiguration {
+    static let model = "gpt-6.1-sol"
+    static let modelName = "GPT-6.1 Sol"
+    static let reasoningEffort = "low"
+    static func validate(_ models: [ModelChoice]) throws {
+        guard models.contains(where: { $0.slug == model }) else {
+            throw ProbeError("이 계정에서는 GPT-6.1 Sol을 사용할 수 없어요. 계정의 모델 이용 권한을 확인해 주세요.")
+        }
     }
 }
 
@@ -119,14 +115,6 @@ struct RequestSnapshot: Codable {
         return String(decoding: data, as: UTF8.self)
     }
 }
-struct UsageEntry: Codable, Identifiable {
-    let id: UUID
-    let date: Date
-    let model: String
-    let input: Int?
-    let output: Int?
-}
-
 struct LearningReply: Codable, Equatable {
     struct Example: Codable, Equatable { let english: String; let korean: String }
     struct Alternative: Codable, Equatable { let text: String; let note: String }
@@ -219,7 +207,6 @@ struct SavedExpression: Codable, Identifiable {
 struct StudyArchive: Codable {
     var chats: [StudyChat] = []
     var saved: [SavedExpression] = []
-    var usage: [UsageEntry]?
     var lastRequest: RequestSnapshot?
 }
 
@@ -265,9 +252,6 @@ final class StudyStore: ObservableObject {
     @Published var region = EnglishRegion(rawValue: UserDefaults.standard.string(forKey: "english.region") ?? "us") ?? .us {
         didSet { UserDefaults.standard.set(region.rawValue, forKey: "english.region") }
     }
-    @Published var effort = ReasoningEffort(rawValue: UserDefaults.standard.string(forKey: "english.effort") ?? "automatic") ?? .automatic {
-        didSet { UserDefaults.standard.set(effort.rawValue, forKey: "english.effort") }
-    }
     @Published private(set) var activeIDs: [LearningMode: UUID] = [:]
     @Published private(set) var isSending = false
     @Published var error: String?
@@ -302,6 +286,8 @@ final class StudyStore: ObservableObject {
             let hash = Data(SHA256.hash(data: Data(subject.utf8))).map { String(format: "%02x", $0) }.joined()
             let url = root.appendingPathComponent("\(hash).json"); archiveURL = url
             if FileManager.default.fileExists(atPath: url.path) { archive = try JSONDecoder().decode(StudyArchive.self, from: Data(contentsOf: url)) }
+            // Rewrite migrated archives without the retired usage ledger; keep chats and saved expressions.
+            save()
             // Load history without reopening a conversation on a fresh launch.
         } catch { self.error = "이 기기의 학습 기록을 읽지 못했어요. 원본 파일은 유지했어요."; archiveURL = nil }
     }
@@ -351,19 +337,15 @@ final class StudyStore: ObservableObject {
         let history = archive.chats[index].messages
         guard history.last?.isUser == true else { return }
         let request = StudyRequest(mode: requestMode, mood: requestMood, history: history, region: region)
-        let requestEffort = effort
         do {
             let credential = try await auth.activeCredential()
             guard credential.subject == subject, account == subject else { throw ProbeError("계정이 변경되어 요청을 멈췄어요.") }
             if auth.models.isEmpty { await auth.loadModels() }
-            guard !auth.selectedModel.isEmpty, auth.models.contains(where: { $0.slug == auth.selectedModel }) else { throw ProbeError("설정에서 사용 가능한 모델을 먼저 확인해 주세요.") }
-            let snapshot = RequestSnapshot(date: Date(), model: auth.selectedModel, instructions: request.instructions, input: request.input, reasoning: requestEffort.value(for: auth.selectedModel))
+            try AIConfiguration.validate(auth.models)
+            let snapshot = RequestSnapshot(date: Date(), model: auth.selectedModel, instructions: request.instructions, input: request.input, reasoning: AIConfiguration.reasoningEffort)
             archive.lastRequest = snapshot; save()
             let completion = try await api.respond(credential, snapshot: snapshot)
             guard account == subject else { return }
-            if archive.usage == nil { archive.usage = [] }
-            archive.usage?.append(UsageEntry(id: UUID(), date: Date(), model: snapshot.model, input: completion.inputTokens, output: completion.outputTokens))
-            save()
             let reply = try LearningReply.decode(completion.text)
             guard reply.kind == .clarification || (requestMode == .word ? reply.kind == .word : reply.kind == .sentence) else { throw ProbeError("현재 탭에 맞지 않는 답변이어서 표시하지 않았어요. 다시 시도해 주세요.") }
             guard account == subject, let target = archive.chats.firstIndex(where: { $0.id == chatID }) else { return }

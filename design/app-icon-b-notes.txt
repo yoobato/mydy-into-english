@@ -1,0 +1,4 @@
+Approved concept: B, ivory italic ie ligature with coral period on forest green.
+Final source: app-icon-b.png, finalized using the built-in imagegen tool from icon-studies-v1.png.
+Prompt: Extract only the center B icon; preserve its ivory italic serif ie ligature and coral period; full-bleed green square with safe-area padding, no rounded outer corners, board labels, mockups, or new elements.
+App, web, and social exports: swift Scripts/generate-icon.swift

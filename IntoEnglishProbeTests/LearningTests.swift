@@ -61,25 +61,24 @@ final class LearningTests: XCTestCase {
     }
     func testRequestPreviewIsTheExactInferenceBodyAndNeverContainsCredentials() throws {
         let request = StudyRequest(mode: .sentence, mood: .formal, history: [StudyMessage(text: "안녕하세요", mood: .formal)], region: .uk)
-        let snapshot = RequestSnapshot(date: Date(), model: "gpt-6.1-sol", instructions: request.instructions, input: request.input, reasoning: ReasoningEffort.low.value(for: "gpt-6.1-sol"))
+        let snapshot = RequestSnapshot(date: Date(), model: "gpt-6.1-sol", instructions: request.instructions, input: request.input, reasoning: AIConfiguration.reasoningEffort)
         let body = try JSONSerialization.jsonObject(with: Data(snapshot.formatted.utf8)) as! [String: Any]
         XCTAssertEqual(body["instructions"] as? String, request.instructions)
         XCTAssertEqual(body["input"] as? [[String: String]], request.input)
         XCTAssertEqual(body["reasoning"] as? [String: String], ["effort": "low"])
         XCTAssertEqual(body["store"] as? Bool, false)
         XCTAssertNil(body["Authorization"])
-        XCTAssertNil(ReasoningEffort.automatic.value(for: "gpt-6.1-sol"))
-        XCTAssertNil(ReasoningEffort.high.value(for: "unknown-model"))
-        XCTAssertEqual(ReasoningEffort.medium.value(for: "gpt-6-astra"), "medium")
+        XCTAssertEqual(AIConfiguration.model, "gpt-6.1-sol")
+        XCTAssertThrowsError(try AIConfiguration.validate([ModelChoice(slug: "other", display_name: "Other", visibility: "list")]))
+        XCTAssertNoThrow(try AIConfiguration.validate([ModelChoice(slug: AIConfiguration.model, display_name: "Sol", visibility: "list")]))
     }
     func testOldArchivesRemainReadableWithoutUsageOrPrompt() throws {
         let archive = try JSONDecoder().decode(StudyArchive.self, from: Data(#"{"chats":[],"saved":[]}"#.utf8))
         XCTAssertTrue(archive.chats.isEmpty)
-        XCTAssertNil(archive.usage)
         XCTAssertNil(archive.lastRequest)
     }
     @MainActor
-    func testRelaunchStartsEmptyAndRetainsHistoryUsageAndLastPrompt() throws {
+    func testRelaunchStartsEmptyAndRetainsHistoryAndLastPrompt() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -89,7 +88,6 @@ final class LearningTests: XCTestCase {
         chat.messages = [StudyMessage(text: "안녕하세요", mood: .casual)]
         var archive = StudyArchive()
         archive.chats = [chat]
-        archive.usage = [UsageEntry(id: UUID(), date: Date(), model: "fixture", input: 123, output: 45)]
         archive.lastRequest = RequestSnapshot(date: Date(), model: "fixture", instructions: "fixture", input: [], reasoning: nil)
         try JSONEncoder().encode(archive).write(to: directory.appendingPathComponent("\(hash).json"))
         let first = StudyStore(directory: directory)
@@ -101,11 +99,9 @@ final class LearningTests: XCTestCase {
         relaunched.switchAccount(subject)
         XCTAssertTrue(relaunched.messages.isEmpty)
         XCTAssertEqual(relaunched.chats.count, 1)
-        XCTAssertEqual(relaunched.archive.usage?.first?.input, 123)
         XCTAssertEqual(relaunched.archive.lastRequest?.instructions, "fixture")
         relaunched.switchAccount("different-account")
         XCTAssertTrue(relaunched.chats.isEmpty)
-        XCTAssertNil(relaunched.archive.usage)
         XCTAssertNil(relaunched.archive.lastRequest)
     }
 
@@ -145,6 +141,19 @@ final class LearningTests: XCTestCase {
             XCTAssertEqual(second.count, 3)
             XCTAssertTrue(Set(first.map(\.id)).isDisjoint(with: second.map(\.id)))
         }
+    }
+
+    func testRetiredUsageLedgerIsIgnoredAndDroppedWithoutLosingHistory() throws {
+        var chat = StudyChat(mode: .sentence)
+        chat.messages = [StudyMessage(text: "legacy conversation", mood: .casual)]
+        var archive = StudyArchive()
+        archive.chats = [chat]
+        var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(archive)) as! [String: Any]
+        legacy["usage"] = [["input": 120, "output": 40]]
+        let migrated = try JSONDecoder().decode(StudyArchive.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(migrated.chats[0].messages[0].text, "legacy conversation")
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(migrated)) as! [String: Any]
+        XCTAssertNil(encoded["usage"])
     }
 
 }

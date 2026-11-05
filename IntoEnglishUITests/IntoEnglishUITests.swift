@@ -24,10 +24,7 @@ final class IntoEnglishUITests: XCTestCase {
         screenshot.name = "Into English home"
         screenshot.lifetime = .keepAlways
         add(screenshot)
-        app.buttons["사용량"].tap()
-        XCTAssertTrue(app.staticTexts["이 계정의 전체 남은 한도"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.buttons["ChatGPT 전체 사용량 확인"].exists)
-        app.buttons["닫기"].tap()
+        XCTAssertFalse(app.buttons["사용량"].exists)
         app.buttons["계정과 모델 설정"].tap()
         XCTAssertTrue(app.staticTexts["버전"].waitForExistence(timeout: 3))
         app.buttons["english-region"].tap()
@@ -38,4 +35,22 @@ final class IntoEnglishUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "1.0.0 (")).firstMatch.exists)
     }
+    func testSignedInSettingsUseFixedAIAndNativeDisconnectAlert() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-testing", "--ui-testing-signed-in"]
+        app.launch()
+        app.buttons["계정과 모델 설정"].tap()
+        XCTAssertTrue(app.staticTexts["test@example.invalid"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.images["chatgpt-account-icon"].exists)
+        XCTAssertTrue(app.staticTexts["GPT-6.1 Sol"].exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Light")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["사용량"].exists)
+        XCTAssertFalse(app.buttons["사용할 모델"].exists)
+        app.buttons["이 기기에서 계정 연결 해제"].tap()
+        let alert = app.alerts["이 기기의 계정 연결을 해제할까요?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        alert.buttons["취소"].tap()
+        XCTAssertTrue(app.staticTexts["test@example.invalid"].exists)
+    }
+
 }

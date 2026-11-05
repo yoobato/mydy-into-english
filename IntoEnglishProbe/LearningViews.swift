@@ -31,7 +31,6 @@ struct IntoEnglishView: View {
     @State private var showSettings = false
     @State private var showSaved = false
     @State private var showHistory = false
-    @State private var showUsage = false
     @State private var showKorean = false
     @State private var showMood = false
     @State private var drafts: [LearningMode: String] = [:]
@@ -94,7 +93,6 @@ struct IntoEnglishView: View {
             showSettings = false
             Task { try? await Task.sleep(for: .milliseconds(400)); await auth.signIn() }
         }) }
-        .sheet(isPresented: $showUsage) { NavigationStack { UsageView(store: store).toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showUsage = false } } } } }
         .sheet(isPresented: $showSaved) { savedSheet }
         .sheet(isPresented: $showHistory) { historySheet }
         .sheet(item: $auth.browser, onDismiss: { auth.browserDismissed() }) { destination in
@@ -259,7 +257,6 @@ struct IntoEnglishView: View {
                 Text(signedIn ? "ChatGPT 연결됨" : "ChatGPT 계정 연결 필요").font(.system(size: 8))
                 if signedIn { Text("·"); Text(auth.models.first(where: { $0.slug == auth.selectedModel })?.display_name ?? "모델 확인 중").lineLimit(1) }
                 Spacer()
-                Button("사용량") { showUsage = true }.font(.system(size: 8))
             }.font(.system(size: 8)).foregroundStyle(EnglishTheme.muted)
         }.padding(.horizontal, 20).padding(.top, 13).padding(.bottom, 9).background(EnglishTheme.background.shadow(color: .black.opacity(0.04), radius: 8, y: -4))
             .overlay(alignment: .top) { Rectangle().fill(EnglishTheme.line).frame(height: 1) }
@@ -419,8 +416,11 @@ struct AccountSettings: View {
             Form {
                 Section("나의 ChatGPT 계정") {
                     if let account = auth.credentials {
-                        Label(account.email, systemImage: "person.crop.circle")
-                        NavigationLink("사용량") { UsageView(store: store) }
+                        HStack(spacing: 10) {
+                            Image("ChatGPTMark").resizable().scaledToFit().frame(width: 24, height: 24)
+                                .accessibilityLabel("ChatGPT").accessibilityIdentifier("chatgpt-account-icon")
+                            Text(account.email)
+                        }
                         Button("이 기기에서 계정 연결 해제", role: .destructive) { confirmDisconnect = true }.disabled(auth.busy || locked)
                     } else { Text("아직 연결된 계정이 없어요.").foregroundStyle(EnglishTheme.muted) }
                     if auth.credentials == nil || auth.credentials?.permitsInference == false {
@@ -434,25 +434,9 @@ struct AccountSettings: View {
                     Text("번역·문장 교정·예문에 선택한 지역의 철자·표현·어투를 적용하고 필요한 문법도 교정합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
                 }
                 if auth.credentials?.permitsInference == true {
-                    Section("AI 모델") {
-                        if !auth.models.isEmpty {
-                            Picker("사용할 모델", selection: $auth.selectedModel) {
-                                ForEach(auth.models) { Text($0.display_name).tag($0.slug) }
-                            }.disabled(auth.busy || locked)
-                            .onChange(of: auth.selectedModel) { _, selected in
-                                if let subject = auth.credentials?.subject { UserDefaults.standard.set(selected, forKey: "model.\(subject)") }
-                            }
-                        }
-                        if ReasoningEffort.supports(auth.selectedModel) {
-                            Picker("추론 강도", selection: $store.effort) {
-                                ForEach(ReasoningEffort.allCases) { Text($0.title).tag($0) }
-                            }.disabled(locked)
-                            Text("모델 기본값은 추론 강도를 지정하지 않는 설정입니다. GPT-6.1 Sol의 기본값은 Medium입니다. Light는 low, Medium은 medium, High는 high로 전송하며, 높은 강도는 응답 시간과 사용량이 늘 수 있습니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
-                        } else {
-                            Text("이 모델은 모델 기본 추론 강도로 요청합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
-                        }
-                        Button("사용 가능한 모델 새로고침") { Task { await auth.loadModels() } }.disabled(auth.busy || locked)
-                        Text("계정이 제공하는 최신 목록을 표시합니다. GPT-5 계열도 목록에 있다면 선택할 수 있습니다. 새 계정의 기본 선택은 GPT-6.1 Sol을 우선합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                    Section("AI") {
+                        LabeledContent("모델", value: AIConfiguration.modelName)
+                        LabeledContent("추론 강도", value: "Light")
                     }
                 }
                 if let error = auth.error { Section { Text(error).font(.footnote).foregroundStyle(.red).textSelection(.enabled) } }
@@ -465,38 +449,11 @@ struct AccountSettings: View {
                 }
             }.scrollContentBackground(.hidden).background(EnglishTheme.background).navigationTitle("설정").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { dismiss() } } }
-                .confirmationDialog("이 기기의 계정 연결을 해제할까요?", isPresented: $confirmDisconnect, titleVisibility: .visible) {
+                .alert("이 기기의 계정 연결을 해제할까요?", isPresented: $confirmDisconnect) {
+                    Button("취소", role: .cancel) {}
                     Button("연결 해제", role: .destructive) { auth.disconnect() }
                 } message: { Text("기록은 기기에 남습니다. 원격 권한 철회는 ChatGPT 설정에서 할 수 있습니다.") }
         }.tint(EnglishTheme.coral)
-    }
-}
-
-struct UsageView: View {
-    @ObservedObject var store: StudyStore
-    private var entries: [UsageEntry] { store.archive.usage ?? [] }
-    private var today: [UsageEntry] { entries.filter { Calendar.current.isDateInToday($0.date) } }
-    var body: some View {
-        List {
-            Section("ChatGPT 전체 한도") {
-                LabeledContent("이 계정의 전체 남은 한도", value: "조회 불가")
-                Text("현재 ChatGPT 연동은 계정 전체의 잔여 한도를 제공하지 않습니다. 이 앱의 사용량만으로 전체 잔여 한도를 계산할 수 없습니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
-
-            }
-            Section("이 기기의 Into English · 오늘") { totals(today) }
-            Section("집계 시작 이후 누적") {
-                totals(entries)
-                Text("이번 버전부터 받은 완료 응답을 집계합니다. 실패·중단된 요청이나 다른 기기·앱 사용량은 포함하지 않습니다. 토큰 정보가 없는 응답은 합계에서 제외합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
-            }
-        }.scrollContentBackground(.hidden).background(EnglishTheme.background)
-            .navigationTitle("사용량").navigationBarTitleDisplayMode(.inline)
-    }
-    @ViewBuilder private func totals(_ items: [UsageEntry]) -> some View {
-        LabeledContent("완료 응답", value: "\(items.count)회")
-        LabeledContent("입력 토큰", value: items.compactMap(\.input).reduce(0, +).formatted())
-        LabeledContent("출력 토큰 (추론 포함)", value: items.compactMap(\.output).reduce(0, +).formatted())
-        let missing = items.filter { $0.input == nil || $0.output == nil }.count
-        if missing > 0 { Text("토큰 정보 미제공: \(missing)회").font(.caption).foregroundStyle(EnglishTheme.muted) }
     }
 }
 
@@ -507,7 +464,7 @@ struct PromptView: View {
     let korean: String
     private var preview: RequestSnapshot {
         let request = store.preview(text: draft, korean: korean)
-        return RequestSnapshot(date: Date(), model: model, instructions: request.instructions, input: request.input, reasoning: store.effort.value(for: model))
+        return RequestSnapshot(date: Date(), model: model, instructions: request.instructions, input: request.input, reasoning: AIConfiguration.reasoningEffort)
     }
     var body: some View {
         List {
