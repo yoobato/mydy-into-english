@@ -33,19 +33,3 @@ struct ChatGPTSignInLabel: View {
         }.frame(maxWidth: .infinity)
     }
 }
-
-struct SplashView: View {
-    var body: some View {
-        ZStack {
-            EnglishTheme.background.ignoresSafeArea()
-            VStack(spacing: 18) {
-                Image("BrandMark").resizable().scaledToFit().frame(width: 90, height: 90)
-                    .clipShape(RoundedRectangle(cornerRadius: 22))
-                HStack(spacing: 0) {
-                    Text("into english").foregroundStyle(EnglishTheme.ink)
-                    Text(".").foregroundStyle(EnglishTheme.coral)
-                }.font(.system(size: 26, weight: .semibold, design: .serif))
-            }.accessibilityElement(children: .ignore).accessibilityLabel("Into English")
-        }
-    }
-}

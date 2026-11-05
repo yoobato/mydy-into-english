@@ -45,8 +45,6 @@ struct IntoEnglishView: View {
     @State private var drafts: [LearningMode: String] = [:]
     @State private var koreanDraft = ""
     @State private var toast: String?
-    @State private var showSplash = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var composerFocused: Bool
     private var draft: Binding<String> { Binding(get: { drafts[store.mode] ?? "" }, set: { drafts[store.mode] = $0 }) }
     private var signedIn: Bool { auth.credentials?.permitsInference == true }
@@ -101,15 +99,9 @@ struct IntoEnglishView: View {
                 .transition(.move(edge: .top).combined(with: .opacity)).allowsHitTesting(false) }
         }
         .blur(radius: signedIn ? 0 : 7)
-        .allowsHitTesting(signedIn && !showSplash)
-        .accessibilityHidden(!signedIn || showSplash)
-        .overlay { if !signedIn && !showSplash { loginOverlay } }
-        .overlay { if showSplash { SplashView().accessibilityIdentifier("splash-screen") } }
-        .task {
-            try? await Task.sleep(for: .milliseconds(650))
-            guard !Task.isCancelled else { return }
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { showSplash = false }
-        }
+        .allowsHitTesting(signedIn)
+        .accessibilityHidden(!signedIn)
+        .overlay { if !signedIn { loginOverlay } }
         .onChange(of: signedIn) { _, connected in
             if !connected { showSettings = false; showSaved = false; showHistory = false; composerFocused = false }
         }
@@ -146,8 +138,11 @@ struct IntoEnglishView: View {
                     }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("chatgpt-sign-in")
                     if auth.busy { ProgressView("계정 연결 중…").font(.caption).tint(EnglishTheme.coral) }
                     if let error = auth.error { Text(error).font(.footnote).foregroundStyle(.red).textSelection(.enabled) }
-                    Text("입력한 내용은 답변 생성을 위해 OpenAI로 전송됩니다.")
-                        .font(.caption).foregroundStyle(EnglishTheme.muted).multilineTextAlignment(.center)
+                    VStack(spacing: 8) {
+                        Text("입력한 단어·문장과 필요한 대화 맥락을 내 ChatGPT 계정의 권한으로 OpenAI에 직접 보내 번역·교정 답변을 받습니다.")
+                        Text("개발자 서버를 거치지 않으며, 대화 기록은 이 기기에 보관됩니다. ChatGPT 앱의 대화 목록에는 추가되지 않습니다.")
+                    }.font(.caption).foregroundStyle(EnglishTheme.muted).multilineTextAlignment(.center).lineSpacing(3)
+                        .accessibilityIdentifier("login-data-explanation")
                 }
                 .padding(28).frame(maxWidth: 380)
                 .background(EnglishTheme.background, in: RoundedRectangle(cornerRadius: 28))
@@ -308,7 +303,11 @@ struct IntoEnglishView: View {
             HStack(spacing: 4) {
                 Circle().fill(signedIn ? Color(red: 0.55, green: 0.65, blue: 0.43) : EnglishTheme.muted).frame(width: 4, height: 4)
                 Text(signedIn ? "ChatGPT 연결됨" : "ChatGPT 계정 연결 필요").font(.system(size: 8))
-                if signedIn { Text("·"); Text(auth.models.first(where: { $0.slug == auth.selectedModel })?.display_name ?? "모델 확인 중").lineLimit(1) }
+                if signedIn {
+                    Text("·")
+                    Text("\(auth.models.first(where: { $0.slug == auth.selectedModel })?.display_name ?? "모델 확인 중") · \(store.effort.effective(for: auth.selectedModel).title)")
+                        .lineLimit(1).minimumScaleFactor(0.8).accessibilityIdentifier("active-ai-configuration")
+                }
                 Spacer()
             }.font(.system(size: 8)).foregroundStyle(EnglishTheme.muted)
         }.padding(.horizontal, 20).padding(.top, 13).padding(.bottom, 9).background(EnglishTheme.background.shadow(color: .black.opacity(0.04), radius: 8, y: -4))

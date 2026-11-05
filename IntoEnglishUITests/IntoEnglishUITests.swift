@@ -81,6 +81,12 @@ final class IntoEnglishUITests: XCTestCase {
         XCTAssertTrue(alert.waitForExistence(timeout: 3))
         alert.buttons["취소"].tap()
         XCTAssertTrue(app.staticTexts["test@example.invalid"].exists)
+        app.navigationBars.buttons["닫기"].tap()
+        let configuration = app.staticTexts["active-ai-configuration"]
+        XCTAssertTrue(configuration.waitForExistence(timeout: 3))
+        XCTAssertTrue(configuration.label.contains("Astra"))
+        XCTAssertTrue(configuration.label.contains("High"))
+        app.buttons["계정과 모델 설정"].tap()
         disconnect.tap()
         alert.buttons["연결 해제"].tap()
         XCTAssertTrue(app.buttons["chatgpt-sign-in"].waitForExistence(timeout: 5))
@@ -97,6 +103,8 @@ final class IntoEnglishUITests: XCTestCase {
         XCTAssertTrue(signIn.isHittable)
         XCTAssertFalse(app.buttons["mode-word"].isHittable)
         XCTAssertFalse(app.buttons["Continue with ChatGPT"].exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "내 ChatGPT 계정의 권한")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "개발자 서버를 거치지")).firstMatch.exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Login screen"
         screenshot.lifetime = .keepAlways
