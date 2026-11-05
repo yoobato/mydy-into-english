@@ -10,4 +10,3 @@ BuildNumber.txt.tmp
 .env*
 *.mobileprovision
 *.p12
-probe-*.png

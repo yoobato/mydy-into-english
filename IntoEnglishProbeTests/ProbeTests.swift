@@ -55,7 +55,6 @@ final class ProbeTests: XCTestCase {
         try parser.line("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}")
         try parser.line("")
         XCTAssertNoThrow(try parser.finish())
-        XCTAssertEqual(parser.inputTokens, 5)
     }
     func testFailedResponseCannotReportSuccess() throws {
         var parser = ResponseStream()

@@ -13,17 +13,12 @@ struct ModelChoice: Decodable, Identifiable {
 }
 struct Completion {
     let text: String
-    let inputTokens: Int?
-    let outputTokens: Int?
-    let requestID: String?
 }
 
 struct ResponseStream {
     private var dataLines = [String]()
     private(set) var text = ""
     private(set) var completed = false
-    private(set) var inputTokens: Int?
-    private(set) var outputTokens: Int?
     mutating func line(_ line: String) throws {
         guard !line.isEmpty else { try flush(); return }
         if line.hasPrefix("data:") { dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)) }
@@ -47,9 +42,6 @@ struct ResponseStream {
                 throw ProbeError("AI 요청의 완료 상태를 확인하지 못했어요.")
             }
             completed = true
-            let usage = response["usage"] as? [String: Any]
-            inputTokens = usage?["input_tokens"] as? Int
-            outputTokens = usage?["output_tokens"] as? Int
             if text.isEmpty, let output = response["output"] as? [[String: Any]] {
                 text = output.flatMap { $0["content"] as? [[String: Any]] ?? [] }
                     .filter { $0["type"] as? String == "output_text" }.compactMap { $0["text"] as? String }.joined()
@@ -62,7 +54,7 @@ struct ResponseStream {
             throw ProbeError("AI 요청이 완료되지 않았어요 (\(code)). 다시 보내려면 전송 버튼을 눌러 주세요.")
         default: break
         }
-        if text.utf8.count > 262144 { throw ProbeError("검증용 응답 크기 제한을 초과했어요.") }
+        if text.utf8.count > 262144 { throw ProbeError("응답 크기 제한을 초과했어요.") }
     }
 }
 
@@ -87,7 +79,7 @@ struct ProbePayload {
         case .sse: try stream.line(line)
         case .json:
             size += line.utf8.count
-            guard size <= 262144 else { throw ProbeError("검증용 JSON 응답 크기 제한을 초과했어요.") }
+            guard size <= 262144 else { throw ProbeError("JSON 응답 크기 제한을 초과했어요.") }
             jsonLines.append(line)
         case .unknown: break
         }
@@ -175,14 +167,6 @@ final class PlanAPI {
         guard !models.isEmpty else { throw ProbeError("이 계정으로 선택할 수 있는 모델이 없어요.") }
         return models
     }
-    func probe(_ credential: Credentials, model: String) async throws -> Completion {
-        try await respond(credential, model: model,
-                          instructions: "This is a connection test. Answer with exactly the short text requested, without explanation.",
-                          input: [["role": "user", "content": "Reply with exactly: Into English is connected."]])
-    }
-    func respond(_ credential: Credentials, model: String, instructions: String, input: [[String: String]]) async throws -> Completion {
-        try await respond(credential, snapshot: RequestSnapshot(date: Date(), model: model, instructions: instructions, input: input, reasoning: ReasoningEffort.low.value(for: model)))
-    }
     func respond(_ credential: Credentials, snapshot: RequestSnapshot) async throws -> Completion {
         guard credential.permitsInference else { throw ProbeError("ChatGPT 요금제 사용 권한이 없어요.") }
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
@@ -202,8 +186,7 @@ final class PlanAPI {
         do {
             for try await byte in bytes { try decoder.byte(byte) }
             let parser = try decoder.finish()
-            return Completion(text: parser.text, inputTokens: parser.inputTokens, outputTokens: parser.outputTokens,
-                              requestID: http.value(forHTTPHeaderField: "x-request-id"))
+            return Completion(text: parser.text)
         } catch {
             let mediaType = http.value(forHTTPHeaderField: "Content-Type")?.components(separatedBy: ";").first ?? "없음"
             let safeType = String(mediaType.filter { $0.isLetter || $0.isNumber || "/-+.".contains($0) }.prefix(80))

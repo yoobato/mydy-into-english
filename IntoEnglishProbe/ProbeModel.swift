@@ -23,12 +23,6 @@ final class ProbeModel: ObservableObject {
     }
     @Published var busy = false
     @Published var error: String?
-    @Published var result: Completion?
-    @Published var events: [String] = []
-    @Published var loginStatus = "미확인"
-    @Published var permissionStatus = "미확인"
-    @Published var modelsStatus = "미확인"
-    @Published var responseStatus = "미확인"
     private var pending: PendingLogin?
     private let listener = LoopbackListener()
     private let api = PlanAPI()
@@ -47,17 +41,11 @@ final class ProbeModel: ObservableObject {
         guard loadSavedAccount else { return }
         do {
             credentials = try Vault.read(Credentials.self, key: "account")
-            if let credentials {
-                loginStatus = "저장된 계정"
-                permissionStatus = credentials.permitsInference ? "허용됨" : "미허용"
-                record("이 기기의 Keychain에서 계정을 불러왔어요. AI 요청은 아직 보내지 않았어요.")
-            }
         } catch { self.error = error.localizedDescription }
     }
     func signIn() async {
         guard !busy else { return }
-        busy = true; error = nil; result = nil
-        loginStatus = "준비 중"
+        busy = true; error = nil
         do {
             let host: String
             if let saved = try Vault.read(String.self, key: "host") { host = saved }
@@ -66,8 +54,7 @@ final class ProbeModel: ObservableObject {
             listener.onFailure = { [weak self] message in
                 guard let self else { return }
                 self.pending = nil; self.browser = nil; self.busy = false
-                self.loginStatus = "실패"; self.error = message
-                self.record("기기 내 로그인 콜백을 받지 못했어요.")
+                self.error = message
             }
             listener.onCallback = { [weak self] url in self?.acceptCallback(url) ?? false }
             let redirect = try await listener.start()
@@ -85,12 +72,10 @@ final class ProbeModel: ObservableObject {
                 URLQueryItem(name: "code_challenge", value: OAuthTools.challenge(verifier))
             ]
             if credentials == nil { components.queryItems?.append(URLQueryItem(name: "agent_name_hint", value: "Into English")) }
-            loginStatus = "로그인 대기"
-            record("127.0.0.1의 기기 내부 콜백이 준비됐어요. ChatGPT 로그인과 사용 권한 승인을 기다립니다.")
             browser = BrowserDestination(url: components.url!)
         } catch {
             pending = nil; listener.stop(); busy = false
-            loginStatus = "실패"; self.error = error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
     private func acceptCallback(_ url: URL) -> Bool {
@@ -105,8 +90,6 @@ final class ProbeModel: ObservableObject {
         }
         pending = nil
         browser = nil
-        loginStatus = "서명 검증 중"
-        record("콜백의 주소와 state를 확인했어요. 코드 교환 및 ID 토큰 서명을 검증합니다.")
         let prior = credentials
         Task {
             defer { listener.stop(); busy = false }
@@ -122,19 +105,13 @@ final class ProbeModel: ObservableObject {
                     scopes: (tokens.scope ?? "").split(separator: " ").map(String.init),
                     expiresAt: Date().addingTimeInterval(tokens.expires_in))
                 try Vault.save(credential, key: "account")
-                credentials = credential; loginStatus = "검증 완료"
-                permissionStatus = credential.permitsInference ? "허용됨" : "미허용"
-                models = []; selectedModel = ""; modelsStatus = "미확인"; responseStatus = "미확인"
-                record("계정 서명 검증과 Keychain 저장을 완료했어요.")
+                credentials = credential
+                models = []; selectedModel = ""
                 guard credential.permitsInference else {
                     throw ProbeError("로그인은 됐지만 ChatGPT 요금제 사용 권한은 허용되지 않았어요. AI 요청을 보내지 않았어요.")
                 }
-                record("ChatGPT 요금제 사용 권한을 확인했어요. 모델 목록과 AI 요청은 아래 버튼으로 따로 검사하세요.")
             } catch {
-                if credentials?.idToken != prior?.idToken && credentials != nil { loginStatus = "검증 완료" }
-                else { loginStatus = "실패" }
                 self.error = error.localizedDescription
-                record("로그인 검증 단계가 끝났어요. 화면의 상태와 오류를 확인해 주세요.")
             }
         }
         return true
@@ -142,8 +119,6 @@ final class ProbeModel: ObservableObject {
     func browserDismissed() {
         guard pending != nil else { return }
         pending = nil; listener.stop(); browser = nil; busy = false
-        loginStatus = credentials == nil ? "취소됨" : "저장된 계정"
-        record("사용자가 로그인 창을 닫았어요. AI 요청은 보내지 않았어요.")
     }
     func activeCredential() async throws -> Credentials {
         guard let current = credentials else { throw ProbeError("먼저 ChatGPT 계정을 연결해 주세요.") }
@@ -159,13 +134,12 @@ final class ProbeModel: ObservableObject {
             expiresAt: Date().addingTimeInterval(updated.expires_in))
         try Vault.save(replacement, key: "account")
         credentials = replacement
-        permissionStatus = replacement.permitsInference ? "허용됨" : "미허용"
         guard replacement.permitsInference else { throw ProbeError("세션 갱신 후 요금제 사용 권한이 없어 요청을 멈췄어요.") }
         return replacement
     }
     func loadModels() async {
         guard !busy else { return }
-        busy = true; error = nil; modelsStatus = "확인 중"
+        busy = true; error = nil
         defer { busy = false }
         do {
             let credential = try await activeCredential()
@@ -173,29 +147,13 @@ final class ProbeModel: ObservableObject {
             let preference = UserDefaults.standard.string(forKey: "model.\(credential.subject)")
             selectedModel = AIConfiguration.choose(models, preferred: preference)
             try AIConfiguration.validate(models, selected: selectedModel)
-            modelsStatus = "\(models.count)개 확인"
-            record("이 계정에서 사용할 수 있는 모델 목록을 조회했어요. 추론 요청은 아직 보내지 않았어요.")
-        } catch { modelsStatus = "실패"; self.error = error.localizedDescription }
-    }
-    func sendProbe() async {
-        guard !busy, models.contains(where: { $0.slug == selectedModel }) else { return }
-        busy = true; error = nil; result = nil; responseStatus = "응답 대기"
-        defer { busy = false }
-        do {
-            let credential = try await activeCredential()
-            let completion = try await api.probe(credential, model: selectedModel)
-            result = completion; responseStatus = "완료 확인"
-            record("response.completed와 실제 응답을 확인했어요. 이 요청의 ChatGPT 요금제 사용 검증에 성공했어요.")
-        } catch { responseStatus = "실패"; self.error = error.localizedDescription; record("AI 요청이 완료되지 않았어요. 다른 결제 방식으로 전환하거나 자동 재시도하지 않았어요.") }
+        } catch { self.error = error.localizedDescription }
     }
     func disconnect() {
         guard !busy else { return }
         do {
             try Vault.delete("account")
-            credentials = nil; models = []; selectedModel = ""; result = nil; error = nil
-            loginStatus = "미확인"; permissionStatus = "미확인"; modelsStatus = "미확인"; responseStatus = "미확인"
-            events = ["이 기기의 저장된 계정을 삭제했어요. 권한 자체를 철회하려면 ChatGPT 설정에서 앱 연결을 해제하세요."]
+            credentials = nil; models = []; selectedModel = ""; error = nil
         } catch { self.error = error.localizedDescription }
     }
-    private func record(_ message: String) { events.append(message) }
 }
