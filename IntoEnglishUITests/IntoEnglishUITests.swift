@@ -35,18 +35,27 @@ final class IntoEnglishUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "1.0.0 (")).firstMatch.exists)
     }
-    func testSignedInSettingsUseFixedAIAndNativeDisconnectAlert() {
+    func testSignedInSettingsSelectAIAndShowInlineDisconnectAlert() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-testing", "--ui-testing-signed-in"]
         app.launch()
         app.buttons["계정과 모델 설정"].tap()
         XCTAssertTrue(app.staticTexts["test@example.invalid"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.images["chatgpt-account-icon"].exists)
-        XCTAssertTrue(app.staticTexts["GPT-6.1 Sol"].exists)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Light")).firstMatch.exists)
+        XCTAssertTrue(app.buttons["ai-model"].exists)
+        XCTAssertTrue(app.buttons["ai-reasoning"].exists)
+        app.buttons["ai-model"].tap()
+        app.buttons["GPT-6 Astra"].tap()
+        XCTAssertTrue(app.buttons["ai-model"].label.contains("Astra"))
+        app.buttons["ai-reasoning"].tap()
+        app.buttons["High"].tap()
+        XCTAssertTrue(app.buttons["ai-reasoning"].label.contains("High"))
         XCTAssertFalse(app.buttons["사용량"].exists)
-        XCTAssertFalse(app.buttons["사용할 모델"].exists)
-        app.buttons["이 기기에서 계정 연결 해제"].tap()
+        let disconnect = app.buttons["account-disconnect"]
+        let email = app.staticTexts["test@example.invalid"]
+        XCTAssertLessThan(abs(disconnect.frame.midY - email.frame.midY), 10)
+        XCTAssertGreaterThan(disconnect.frame.midX, email.frame.midX)
+        disconnect.tap()
         let alert = app.alerts["이 기기의 계정 연결을 해제할까요?"]
         XCTAssertTrue(alert.waitForExistence(timeout: 3))
         alert.buttons["취소"].tap()

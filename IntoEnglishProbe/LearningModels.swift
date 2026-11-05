@@ -88,13 +88,27 @@ enum EnglishRegion: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum ReasoningEffort: String, CaseIterable, Identifiable {
+    case automatic, low, medium, high
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .automatic: return "모델 기본값"; case .low: return "Light"; case .medium: return "Medium"; case .high: return "High" }
+    }
+    static func supports(_ model: String) -> Bool { model.hasPrefix("gpt-6") || model.hasPrefix("gpt-5.6") }
+    func value(for model: String) -> String? { self != .automatic && Self.supports(model) ? rawValue : nil }
+}
 enum AIConfiguration {
     static let model = "gpt-6.1-sol"
     static let modelName = "GPT-6.1 Sol"
     static let reasoningEffort = "low"
-    static func validate(_ models: [ModelChoice]) throws {
-        guard models.contains(where: { $0.slug == model }) else {
-            throw ProbeError("이 계정에서는 GPT-6.1 Sol을 사용할 수 없어요. 계정의 모델 이용 권한을 확인해 주세요.")
+    static func choose(_ models: [ModelChoice], preferred: String?) -> String {
+        models.first(where: { $0.slug == preferred })?.slug
+            ?? models.first(where: { $0.slug == model })?.slug
+            ?? models.first?.slug ?? ""
+    }
+    static func validate(_ models: [ModelChoice], selected: String = model) throws {
+        guard models.contains(where: { $0.slug == selected }) else {
+            throw ProbeError("선택한 모델을 이 계정에서 사용할 수 없어요. 모델 목록을 새로고침해 주세요.")
         }
     }
 }
@@ -252,6 +266,9 @@ final class StudyStore: ObservableObject {
     @Published var region = EnglishRegion(rawValue: UserDefaults.standard.string(forKey: "english.region") ?? "us") ?? .us {
         didSet { UserDefaults.standard.set(region.rawValue, forKey: "english.region") }
     }
+    @Published var effort = ReasoningEffort(rawValue: UserDefaults.standard.string(forKey: "reasoning.effort") ?? "low") ?? .low {
+        didSet { UserDefaults.standard.set(effort.rawValue, forKey: "reasoning.effort") }
+    }
     @Published private(set) var activeIDs: [LearningMode: UUID] = [:]
     @Published private(set) var isSending = false
     @Published var error: String?
@@ -337,12 +354,13 @@ final class StudyStore: ObservableObject {
         let history = archive.chats[index].messages
         guard history.last?.isUser == true else { return }
         let request = StudyRequest(mode: requestMode, mood: requestMood, history: history, region: region)
+        let requestEffort = effort
         do {
             let credential = try await auth.activeCredential()
             guard credential.subject == subject, account == subject else { throw ProbeError("계정이 변경되어 요청을 멈췄어요.") }
             if auth.models.isEmpty { await auth.loadModels() }
-            try AIConfiguration.validate(auth.models)
-            let snapshot = RequestSnapshot(date: Date(), model: auth.selectedModel, instructions: request.instructions, input: request.input, reasoning: AIConfiguration.reasoningEffort)
+            try AIConfiguration.validate(auth.models, selected: auth.selectedModel)
+            let snapshot = RequestSnapshot(date: Date(), model: auth.selectedModel, instructions: request.instructions, input: request.input, reasoning: requestEffort.value(for: auth.selectedModel))
             archive.lastRequest = snapshot; save()
             let completion = try await api.respond(credential, snapshot: snapshot)
             guard account == subject else { return }

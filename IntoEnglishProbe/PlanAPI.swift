@@ -181,7 +181,7 @@ final class PlanAPI {
                           input: [["role": "user", "content": "Reply with exactly: Into English is connected."]])
     }
     func respond(_ credential: Credentials, model: String, instructions: String, input: [[String: String]]) async throws -> Completion {
-        try await respond(credential, snapshot: RequestSnapshot(date: Date(), model: model, instructions: instructions, input: input, reasoning: AIConfiguration.reasoningEffort))
+        try await respond(credential, snapshot: RequestSnapshot(date: Date(), model: model, instructions: instructions, input: input, reasoning: ReasoningEffort.low.value(for: model)))
     }
     func respond(_ credential: Credentials, snapshot: RequestSnapshot) async throws -> Completion {
         guard credential.permitsInference else { throw ProbeError("ChatGPT 요금제 사용 권한이 없어요.") }

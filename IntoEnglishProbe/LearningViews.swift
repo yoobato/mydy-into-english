@@ -419,9 +419,12 @@ struct AccountSettings: View {
                         HStack(spacing: 10) {
                             Image("ChatGPTMark").resizable().scaledToFit().frame(width: 24, height: 24)
                                 .accessibilityLabel("ChatGPT").accessibilityIdentifier("chatgpt-account-icon")
-                            Text(account.email)
+                            Text(account.email).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 8)
+                            Button("연결 해제", role: .destructive) { confirmDisconnect = true }
+                                .font(.caption).buttonStyle(.borderless).disabled(auth.busy || locked)
+                                .accessibilityIdentifier("account-disconnect")
                         }
-                        Button("이 기기에서 계정 연결 해제", role: .destructive) { confirmDisconnect = true }.disabled(auth.busy || locked)
                     } else { Text("아직 연결된 계정이 없어요.").foregroundStyle(EnglishTheme.muted) }
                     if auth.credentials == nil || auth.credentials?.permitsInference == false {
                         Button("Continue with ChatGPT", action: onSignIn).disabled(auth.busy || locked)
@@ -435,8 +438,20 @@ struct AccountSettings: View {
                 }
                 if auth.credentials?.permitsInference == true {
                     Section("AI") {
-                        LabeledContent("모델", value: AIConfiguration.modelName)
-                        LabeledContent("추론 강도", value: "Light")
+                        if !auth.models.isEmpty {
+                            Picker("모델", selection: $auth.selectedModel) {
+                                ForEach(auth.models) { Text($0.display_name).tag($0.slug) }
+                            }.accessibilityIdentifier("ai-model").disabled(auth.busy || locked)
+                        }
+                        if ReasoningEffort.supports(auth.selectedModel) {
+                            Picker("추론 강도", selection: $store.effort) {
+                                ForEach(ReasoningEffort.allCases) { Text($0.title).tag($0) }
+                            }.accessibilityIdentifier("ai-reasoning").disabled(locked)
+                        } else {
+                            LabeledContent("추론 강도", value: "모델 기본값")
+                            Text("이 모델은 기본 추론 강도로 요청합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                        }
+                        Button("모델 목록 새로고침") { Task { await auth.loadModels() } }.disabled(auth.busy || locked)
                     }
                 }
                 if let error = auth.error { Section { Text(error).font(.footnote).foregroundStyle(.red).textSelection(.enabled) } }
@@ -464,7 +479,7 @@ struct PromptView: View {
     let korean: String
     private var preview: RequestSnapshot {
         let request = store.preview(text: draft, korean: korean)
-        return RequestSnapshot(date: Date(), model: model, instructions: request.instructions, input: request.input, reasoning: AIConfiguration.reasoningEffort)
+        return RequestSnapshot(date: Date(), model: model, instructions: request.instructions, input: request.input, reasoning: store.effort.value(for: model))
     }
     var body: some View {
         List {

@@ -156,4 +156,16 @@ final class LearningTests: XCTestCase {
         XCTAssertNil(encoded["usage"])
     }
 
+    func testSelectedModelPreferenceAndReasoningAreValidated() throws {
+        let models = [ModelChoice(slug: "gpt-6-astra", display_name: "Astra", visibility: "list"), ModelChoice(slug: "gpt-6.1-sol", display_name: "Sol", visibility: "list")]
+        XCTAssertEqual(AIConfiguration.choose(models, preferred: "gpt-6-astra"), "gpt-6-astra")
+        XCTAssertEqual(AIConfiguration.choose(models, preferred: "unavailable"), "gpt-6.1-sol")
+        XCTAssertNoThrow(try AIConfiguration.validate(models, selected: "gpt-6-astra"))
+        XCTAssertThrowsError(try AIConfiguration.validate(models, selected: "missing"))
+        XCTAssertEqual(ReasoningEffort.high.value(for: "gpt-6-astra"), "high")
+        XCTAssertEqual(ReasoningEffort.medium.value(for: "gpt-6.1-sol"), "medium")
+        XCTAssertNil(ReasoningEffort.automatic.value(for: "gpt-6.1-sol"))
+        XCTAssertNil(ReasoningEffort.high.value(for: "unknown"))
+    }
+
 }

@@ -14,7 +14,13 @@ final class ProbeModel: ObservableObject {
     @Published var credentials: Credentials?
     @Published var browser: BrowserDestination?
     @Published var models: [ModelChoice] = []
-    var selectedModel: String { AIConfiguration.model }
+    @Published var selectedModel = "" {
+        didSet {
+            if !selectedModel.isEmpty, let subject = credentials?.subject {
+                UserDefaults.standard.set(selectedModel, forKey: "model.\(subject)")
+            }
+        }
+    }
     @Published var busy = false
     @Published var error: String?
     @Published var result: Completion?
@@ -32,7 +38,8 @@ final class ProbeModel: ObservableObject {
         if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
             if ProcessInfo.processInfo.arguments.contains("--ui-testing-signed-in") {
                 credentials = Credentials(clientID: "synthetic-client", subject: "synthetic-ui-account", email: "test@example.invalid", accessToken: "synthetic-not-a-token", refreshToken: nil, idToken: "synthetic-id-token", scopes: ["chatgpt.tokens.use.direct"], expiresAt: .distantFuture)
-                models = [ModelChoice(slug: AIConfiguration.model, display_name: AIConfiguration.modelName, visibility: "list")]
+                models = [ModelChoice(slug: AIConfiguration.model, display_name: AIConfiguration.modelName, visibility: "list"), ModelChoice(slug: "gpt-6-astra", display_name: "GPT-6 Astra", visibility: "list")]
+                selectedModel = AIConfiguration.model
             }
             return
         }
@@ -117,7 +124,7 @@ final class ProbeModel: ObservableObject {
                 try Vault.save(credential, key: "account")
                 credentials = credential; loginStatus = "검증 완료"
                 permissionStatus = credential.permitsInference ? "허용됨" : "미허용"
-                models = []; modelsStatus = "미확인"; responseStatus = "미확인"
+                models = []; selectedModel = ""; modelsStatus = "미확인"; responseStatus = "미확인"
                 record("계정 서명 검증과 Keychain 저장을 완료했어요.")
                 guard credential.permitsInference else {
                     throw ProbeError("로그인은 됐지만 ChatGPT 요금제 사용 권한은 허용되지 않았어요. AI 요청을 보내지 않았어요.")
@@ -163,7 +170,9 @@ final class ProbeModel: ObservableObject {
         do {
             let credential = try await activeCredential()
             models = try await api.models(credential)
-            try AIConfiguration.validate(models)
+            let preference = UserDefaults.standard.string(forKey: "model.\(credential.subject)")
+            selectedModel = AIConfiguration.choose(models, preferred: preference)
+            try AIConfiguration.validate(models, selected: selectedModel)
             modelsStatus = "\(models.count)개 확인"
             record("이 계정에서 사용할 수 있는 모델 목록을 조회했어요. 추론 요청은 아직 보내지 않았어요.")
         } catch { modelsStatus = "실패"; self.error = error.localizedDescription }
@@ -183,7 +192,7 @@ final class ProbeModel: ObservableObject {
         guard !busy else { return }
         do {
             try Vault.delete("account")
-            credentials = nil; models = []; result = nil; error = nil
+            credentials = nil; models = []; selectedModel = ""; result = nil; error = nil
             loginStatus = "미확인"; permissionStatus = "미확인"; modelsStatus = "미확인"; responseStatus = "미확인"
             events = ["이 기기의 저장된 계정을 삭제했어요. 권한 자체를 철회하려면 ChatGPT 설정에서 앱 연결을 해제하세요."]
         } catch { self.error = error.localizedDescription }
