@@ -1,0 +1,79 @@
+name: IntoEnglishProbe
+options:
+  bundleIdPrefix: kr.mydy.intoenglish
+  deploymentTarget:
+    iOS: '17.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    DEVELOPMENT_TEAM: E4PNYHEL89
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: '1,2'
+    ENABLE_USER_SCRIPT_SANDBOXING: false
+targets:
+  IntoEnglishProbe:
+    type: application
+    platform: iOS
+    sources: [IntoEnglishProbe]
+    preBuildScripts:
+      - name: Increment build number
+        script: /usr/bin/python3 "$SRCROOT/Scripts/increment-build-number.py"
+        basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - name: Stamp app version
+        script: /bin/sh "$SRCROOT/Scripts/stamp-build-number.sh"
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        basedOnDependencyAnalysis: false
+    info:
+      path: IntoEnglishProbe/Info.plist
+      properties:
+        CFBundleDisplayName: Into English
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: kr.mydy.intoenglish.probe
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: '1.0.0'
+        CURRENT_PROJECT_VERSION: '1'
+        GENERATE_INFOPLIST_FILE: false
+  IntoEnglishProbeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [IntoEnglishProbeTests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+    dependencies:
+      - target: IntoEnglishProbe
+  IntoEnglishUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [IntoEnglishUITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+    dependencies:
+      - target: IntoEnglishProbe
+schemes:
+  IntoEnglishProbe:
+    build:
+      targets:
+        IntoEnglishProbe: all
+        IntoEnglishProbeTests: [test]
+    test:
+      targets: [IntoEnglishProbeTests, IntoEnglishUITests]

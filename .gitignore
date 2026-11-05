@@ -1,0 +1,13 @@
+.DS_Store
+build/
+build-device/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.build-number.lock
+BuildNumber.txt.tmp
+*.xcresult/
+.env*
+*.mobileprovision
+*.p12
+probe-*.png
