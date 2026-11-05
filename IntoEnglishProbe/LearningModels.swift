@@ -316,7 +316,7 @@ final class StudyStore: ObservableObject {
     init(directory: URL? = nil, api: PlanAPI = PlanAPI()) {
         self.api = api
         #if DEBUG
-        self.directory = ProcessInfo.processInfo.arguments.contains("--ui-testing-history") && ProcessInfo.processInfo.arguments.contains("--ui-testing")
+        self.directory = (ProcessInfo.processInfo.arguments.contains("--ui-testing-history") || ProcessInfo.processInfo.arguments.contains("--ui-testing-saved-accordion")) && ProcessInfo.processInfo.arguments.contains("--ui-testing")
             ? FileManager.default.temporaryDirectory.appendingPathComponent("history-ui-\(UUID().uuidString)") : directory
         #else
         self.directory = directory
@@ -360,6 +360,13 @@ final class StudyStore: ObservableObject {
                 if let reply = try? LearningReply.decode(#"{"kind":"word","text":"test expression","meaning":"테스트 표현"}"#) {
                     archive.saved = [SavedExpression(id: UUID(), reply: reply, mood: .casual, mode: .word, createdAt: Date())]
                 }
+            }
+            #endif
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--ui-testing"), ProcessInfo.processInfo.arguments.contains("--ui-testing-saved-accordion"), subject == "synthetic-ui-account" {
+                let first = try LearningReply.decode(#"{"kind":"word","text":"first expression","meaning":"첫 표현","explanation":"첫 번째 표현의 자세한 설명"}"#)
+                let second = try LearningReply.decode(#"{"kind":"sentence","text":"second expression","meaning":"두 번째 표현","explanation":"두 번째 표현의 자세한 설명"}"#)
+                archive.saved = [first, second].map { SavedExpression(id: UUID(), reply: $0, mood: .casual, mode: $0.kind == .word ? .word : .sentence, createdAt: Date()) }
             }
             #endif
             // Rewrite migrated archives without the retired usage ledger; keep chats and saved expressions.

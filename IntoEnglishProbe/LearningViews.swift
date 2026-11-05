@@ -39,6 +39,7 @@ struct IntoEnglishView: View {
     @StateObject private var speaker = Speaker()
     @State private var showSettings = false
     @State private var showSaved = false
+    @State private var expandedSavedID: UUID?
     @State private var showHistory = false
     @State private var showKorean = false
     @State private var showMood = false
@@ -112,7 +113,7 @@ struct IntoEnglishView: View {
             showSettings = false
             Task { try? await Task.sleep(for: .milliseconds(400)); await auth.signIn() }
         }) }
-        .sheet(isPresented: $showSaved) { savedSheet }
+        .sheet(isPresented: $showSaved, onDismiss: { expandedSavedID = nil }) { savedSheet }
         .sheet(isPresented: $showHistory) { historySheet }
         .sheet(item: $auth.browser, onDismiss: { auth.browserDismissed() }) { destination in
             LoginBrowser(url: destination.url, onDone: { auth.browserDismissed() }).ignoresSafeArea()
@@ -168,7 +169,7 @@ struct IntoEnglishView: View {
                 Text(".").font(.title2.weight(.bold)).foregroundStyle(EnglishTheme.coral)
             }.accessibilityLabel("Into English")
             Spacer()
-            Button { composerFocused = false; showSaved = true } label: { Image(systemName: "bookmark").font(.system(size: 17)) }.accessibilityLabel("저장한 표현")
+            Button { composerFocused = false; expandedSavedID = nil; showSaved = true } label: { Image(systemName: "bookmark").font(.system(size: 17)) }.accessibilityLabel("저장한 표현")
             Button { composerFocused = false; showSettings = true } label: { Image(systemName: "gearshape").font(.system(size: 20)) }
                 .accessibilityLabel("계정과 모델 설정")
         }.padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 20)
@@ -338,20 +339,63 @@ struct IntoEnglishView: View {
     private var savedSheet: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("저장한 표현").font(.title2.weight(.medium)).tracking(-0.9)
+                LazyVStack(alignment: .leading, spacing: 10) {
                     if store.archive.saved.isEmpty {
                         ContentUnavailableView("아직 저장한 표현이 없어요", systemImage: "bookmark", description: Text("답변의 책갈피 버튼으로 저장할 수 있습니다."))
                     }
                     ForEach(store.archive.saved) { item in
-                        ReplyCard(reply: item.reply, mood: item.mood, saved: true, onSave: { store.removeSaved(item.id) }, onCopy: { copy(item.reply.text) }, onSpeak: { speak(item.reply) }, onChoice: { _ in }, onDelete: { store.removeSaved(item.id) })
-                            .accessibilityIdentifier("saved-expression-\(item.id)")
+                        savedExpressionCard(item)
                     }
                     if let error = store.error { Text(error).font(.footnote).foregroundStyle(.red) }
                 }.padding(22)
             }.background(EnglishTheme.background).navigationTitle("저장한 표현").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showSaved = false } } }
         }.tint(EnglishTheme.coral)
+    }
+    private func savedExpressionCard(_ item: SavedExpression) -> some View {
+        let expanded = expandedSavedID == item.id
+        return VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        expandedSavedID = expanded ? nil : item.id
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(item.reply.text).font(.system(size: 14, weight: .medium))
+                                .lineLimit(expanded ? nil : 2).multilineTextAlignment(.leading)
+                            if !item.reply.meaning.isEmpty {
+                                Text(item.reply.meaning).font(.system(size: 11)).foregroundStyle(EnglishTheme.muted)
+                                    .lineLimit(expanded ? nil : 1).multilineTextAlignment(.leading)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .semibold)).foregroundStyle(EnglishTheme.muted)
+                    }.padding(.leading, 14).padding(.vertical, 12).contentShape(Rectangle())
+                }.buttonStyle(.plain).foregroundStyle(EnglishTheme.ink)
+                    .accessibilityLabel(item.reply.text).accessibilityValue(expanded ? "펼쳐짐" : "접힘")
+                    .accessibilityHint(item.reply.meaning)
+                    .accessibilityIdentifier("saved-toggle-\(item.id)")
+                Button {
+                    store.removeSaved(item.id)
+                    if !store.archive.saved.contains(where: { $0.id == item.id }), expanded { expandedSavedID = nil }
+                } label: {
+                    Image(systemName: "trash").font(.system(size: 12)).foregroundStyle(.red)
+                        .frame(width: 30, height: 30).background(Color.red.opacity(0.07), in: Circle())
+                        .frame(width: 44, height: 44)
+                }.buttonStyle(.plain).accessibilityLabel("저장한 표현 삭제")
+                    .padding(.trailing, 6)
+            }
+            if expanded {
+                Divider().overlay(EnglishTheme.line)
+                ReplyCard(reply: item.reply, mood: item.mood, saved: true,
+                          onSave: {}, onCopy: { copy(item.reply.text) }, onSpeak: { speak(item.reply) },
+                          onChoice: { _ in }, embeddedSavedDetail: true)
+            }
+        }.background(.white, in: RoundedRectangle(cornerRadius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(EnglishTheme.line, lineWidth: 0.7))
     }
     private var historySheet: some View {
         NavigationStack {
@@ -395,7 +439,7 @@ struct ReplyCard: View {
     let onCopy: () -> Void
     let onSpeak: () -> Void
     let onChoice: (String) -> Void
-    var onDelete: (() -> Void)? = nil
+    var embeddedSavedDetail = false
     @State private var showChanges = true
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -413,6 +457,7 @@ struct ReplyCard: View {
                     Text("위에서 고르거나, 아래에 직접 적어도 좋아요.").font(.system(size: 9)).foregroundStyle(EnglishTheme.muted)
                 }.padding(19)
             } else {
+                if !embeddedSavedDetail {
                 VStack(alignment: .leading, spacing: 10) {
                     Label(reply.kind == .word ? "표현 알아보기" : "이렇게 말해보세요", systemImage: "sparkle")
                         .font(.system(size: 9, weight: .medium)).foregroundStyle(EnglishTheme.muted)
@@ -422,6 +467,7 @@ struct ReplyCard: View {
                         Text([reply.partOfSpeech, reply.pronunciation].filter { !$0.isEmpty }.joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(EnglishTheme.muted)
                     }
                 }.padding(19)
+                }
                 if !reply.explanation.isEmpty || reply.example != nil {
                     VStack(alignment: .leading, spacing: 10) {
                         if !reply.explanation.isEmpty { Text(reply.explanation).font(.system(size: 12)).lineSpacing(5).textSelection(.enabled) }
@@ -460,13 +506,7 @@ struct ReplyCard: View {
                 HStack(spacing: 18) {
                     Button(action: onCopy) { Label("복사", systemImage: "square.on.square") }
                     Button(action: onSpeak) { Label("듣기", systemImage: "speaker.wave.2") }
-                    if let onDelete {
-                        Button(action: onDelete) {
-                            Image(systemName: "trash").font(.system(size: 12))
-                                .foregroundStyle(.red).frame(width: 30, height: 30)
-                                .background(Color.red.opacity(0.07), in: Circle()).frame(width: 44, height: 44)
-                        }.accessibilityLabel("저장한 표현 삭제")
-                    } else {
+                    if !embeddedSavedDetail {
                         Button(action: onSave) { Image(systemName: saved ? "bookmark.fill" : "bookmark") }
                             .foregroundStyle(saved ? EnglishTheme.coral : EnglishTheme.muted).accessibilityLabel(saved ? "저장 취소" : "표현 저장")
                     }
@@ -475,7 +515,7 @@ struct ReplyCard: View {
                 }.font(.system(size: 10)).foregroundStyle(EnglishTheme.muted).buttonStyle(.plain).padding(.horizontal, 18).padding(.vertical, 14)
             }
         }.frame(maxWidth: .infinity, alignment: .leading).background(.white, in: RoundedRectangle(cornerRadius: 15))
-            .clipShape(RoundedRectangle(cornerRadius: 15)).overlay(RoundedRectangle(cornerRadius: 15).stroke(EnglishTheme.line, lineWidth: 0.7))
+            .clipShape(RoundedRectangle(cornerRadius: 15)).overlay(RoundedRectangle(cornerRadius: 15).stroke(EnglishTheme.line, lineWidth: embeddedSavedDetail ? 0 : 0.7))
     }
 }
 

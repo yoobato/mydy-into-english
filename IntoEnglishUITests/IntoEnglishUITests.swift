@@ -179,4 +179,33 @@ final class IntoEnglishUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testSavedExpressionsExpandOneAtATimeAndRemainDeletable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-testing", "--ui-testing-signed-in", "--ui-testing-saved-accordion"]
+        app.launch()
+        app.buttons["저장한 표현"].tap()
+        let first = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "saved-toggle-", "first expression")).firstMatch
+        let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "saved-toggle-", "second expression")).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+        XCTAssertEqual(first.value as? String, "접힘")
+        XCTAssertEqual(second.value as? String, "접힘")
+        XCTAssertFalse(app.staticTexts["첫 번째 표현의 자세한 설명"].exists)
+        let compact = XCTAttachment(screenshot: app.screenshot())
+        compact.name = "Compact saved expressions"; compact.lifetime = .keepAlways; add(compact)
+        first.tap()
+        XCTAssertTrue(app.staticTexts["첫 번째 표현의 자세한 설명"].waitForExistence(timeout: 3))
+        second.tap()
+        XCTAssertFalse(app.staticTexts["첫 번째 표현의 자세한 설명"].exists)
+        XCTAssertTrue(app.staticTexts["두 번째 표현의 자세한 설명"].exists)
+        XCTAssertEqual(first.value as? String, "접힘")
+        let expanded = XCTAttachment(screenshot: app.screenshot())
+        expanded.name = "One expanded saved expression"; expanded.lifetime = .keepAlways; add(expanded)
+        second.tap()
+        XCTAssertFalse(app.staticTexts["두 번째 표현의 자세한 설명"].exists)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "저장한 표현 삭제")).count, 2)
+        app.buttons.matching(NSPredicate(format: "label == %@", "저장한 표현 삭제")).element(boundBy: 0).tap()
+        XCTAssertFalse(first.exists)
+        XCTAssertTrue(second.exists)
+    }
+
 }
