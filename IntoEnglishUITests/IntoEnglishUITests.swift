@@ -7,7 +7,19 @@ final class IntoEnglishUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["문장 다듬기"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.textFields["learning-input"].exists || app.textViews["learning-input"].exists)
-        app.buttons["단어 / 숙어"].tap()
+        let wordTab = app.buttons["mode-word"]
+        let sentenceTab = app.buttons["mode-sentence"]
+        XCTAssertEqual(wordTab.label, "단어")
+        XCTAssertFalse(app.buttons["단어 / 숙어"].exists)
+        // Exercise the held-down state and switching in both directions.
+        wordTab.press(forDuration: 0.6)
+        XCTAssertTrue(wordTab.isSelected)
+        XCTAssertTrue(wordTab.isHittable)
+        XCTAssertTrue(sentenceTab.isHittable)
+        sentenceTab.press(forDuration: 0.6)
+        XCTAssertTrue(sentenceTab.isSelected)
+        wordTab.tap()
+        XCTAssertTrue(wordTab.isSelected)
         XCTAssertTrue(app.buttons["example-0"].waitForExistence(timeout: 3))
         app.buttons["문장 다듬기"].tap()
         XCTAssertTrue(app.buttons["example-0"].waitForExistence(timeout: 3))

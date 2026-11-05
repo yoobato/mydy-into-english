@@ -5,7 +5,7 @@ import CryptoKit
 enum LearningMode: String, Codable, CaseIterable, Identifiable {
     case word, sentence
     var id: String { rawValue }
-    var title: String { self == .word ? "단어 / 숙어" : "문장 다듬기" }
+    var title: String { self == .word ? "단어" : "문장 다듬기" }
     var symbol: String { self == .word ? "book" : "square.and.pencil" }
 }
 

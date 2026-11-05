@@ -12,6 +12,15 @@ enum EnglishTheme {
     static let line = Color(red: 0.88, green: 0.89, blue: 0.84)
 }
 
+/// Keep tab text fully visible while pressed; only the background gives feedback.
+private struct ModeTabButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? EnglishTheme.line.opacity(0.45) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 9))
+    }
+}
+
 @MainActor
 final class Speaker: ObservableObject {
     private let synthesizer = AVSpeechSynthesizer()
@@ -129,10 +138,13 @@ struct IntoEnglishView: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 12)
                         .background(store.mode == mode ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 9))
                         .foregroundStyle(store.mode == mode ? EnglishTheme.ink : EnglishTheme.muted)
-                }.buttonStyle(.plain).accessibilityAddTraits(store.mode == mode ? .isSelected : [])
+                }.buttonStyle(ModeTabButtonStyle())
+                    .accessibilityIdentifier("mode-\(mode.rawValue)")
+                    .accessibilityAddTraits(store.mode == mode ? .isSelected : [])
             }
         }.padding(4).background(EnglishTheme.line.opacity(0.4), in: RoundedRectangle(cornerRadius: 13))
             .padding(.horizontal, 23).padding(.bottom, 8).disabled(busy)
+            .transaction { $0.animation = nil }
     }
     private var welcome: some View {
         VStack(spacing: 0) {
