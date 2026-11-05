@@ -15,10 +15,10 @@ enum EnglishTheme {
 @MainActor
 final class Speaker: ObservableObject {
     private let synthesizer = AVSpeechSynthesizer()
-    func speak(_ text: String) {
+    func speak(_ text: String, region: EnglishRegion) {
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.voice = AVSpeechSynthesisVoice(language: region.voice)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.86
         synthesizer.speak(utterance)
     }
@@ -31,6 +31,7 @@ struct IntoEnglishView: View {
     @State private var showSettings = false
     @State private var showSaved = false
     @State private var showHistory = false
+    @State private var showUsage = false
     @State private var showKorean = false
     @State private var drafts: [LearningMode: String] = [:]
     @State private var koreanDraft = ""
@@ -50,8 +51,6 @@ struct IntoEnglishView: View {
                     VStack(alignment: .leading, spacing: 25) {
                         if store.messages.isEmpty { welcome }
                         else {
-                            Text("작은 연습, 더 자연스러운 영어.")
-                                .font(.caption2).foregroundStyle(EnglishTheme.muted).frame(maxWidth: .infinity).padding(.top, 10)
                             ForEach(store.messages) { message in
                                 messageView(message)
                             }
@@ -60,7 +59,7 @@ struct IntoEnglishView: View {
                             HStack(spacing: 10) {
                                 companionMark
                                 ProgressView().tint(EnglishTheme.coral)
-                                Text("뜻은 그대로, 표현을 다듬고 있어요…").font(.caption).foregroundStyle(EnglishTheme.muted)
+                                Text("응답을 기다리는 중…").font(.caption).foregroundStyle(EnglishTheme.muted)
                             }.padding(.vertical, 8)
                         }
                         if let error = store.error ?? auth.error {
@@ -90,10 +89,11 @@ struct IntoEnglishView: View {
                 .background(EnglishTheme.ink, in: Capsule()).foregroundStyle(.white).padding(.top, 65)
                 .transition(.move(edge: .top).combined(with: .opacity)).allowsHitTesting(false) }
         }
-        .sheet(isPresented: $showSettings) { AccountSettings(auth: auth, locked: store.isSending, onSignIn: {
+        .sheet(isPresented: $showSettings) { AccountSettings(auth: auth, store: store, draft: draft.wrappedValue, korean: koreanDraft, locked: store.isSending, onSignIn: {
             showSettings = false
             Task { try? await Task.sleep(for: .milliseconds(400)); await auth.signIn() }
         }) }
+        .sheet(isPresented: $showUsage) { NavigationStack { UsageView(store: store).toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showUsage = false } } } } }
         .sheet(isPresented: $showSaved) { savedSheet }
         .sheet(isPresented: $showHistory) { historySheet }
         .sheet(item: $auth.browser, onDismiss: { auth.browserDismissed() }) { destination in
@@ -143,22 +143,18 @@ struct IntoEnglishView: View {
                 Image(systemName: "sparkle").font(.system(size: 17)).foregroundStyle(EnglishTheme.coral).offset(x: 49, y: -29)
                 Image(systemName: "sparkle").font(.system(size: 13)).foregroundStyle(EnglishTheme.muted).offset(x: -46, y: 24)
             }.frame(height: 100).padding(.top, 6)
-            Text("A LITTLE PRACTICE, EVERY DAY").font(.system(size: 8, weight: .semibold)).tracking(2.2).foregroundStyle(EnglishTheme.muted).padding(.top, 9)
-            VStack(spacing: 3) {
-                Text(store.mode == .sentence ? "하고 싶은 말," : "궁금한 표현,")
-                Text(store.mode == .sentence ? "나답게 영어로." : "한마디면 충분해요.").foregroundStyle(EnglishTheme.coral)
-            }.font(.system(size: 28, weight: .medium)).tracking(-1.1).padding(.top, 18)
-            Text(store.mode == .sentence ? "영어가 떠오르지 않으면 한국어로만 적어도 좋아요.\n내 뜻은 그대로, 표현은 더 자연스럽게." : "영어도 한국어도, 떠오르는 그대로 적어보세요.\n단어의 뜻부터 쓰임새까지 함께 알아가요.")
-                .font(.system(size: 11)).foregroundStyle(EnglishTheme.muted).lineSpacing(6).multilineTextAlignment(.center).padding(.top, 15)
+            Text(store.mode.title).font(.system(size: 27, weight: .medium)).tracking(-1).padding(.top, 18)
+            Text(store.mode == .sentence ? "한국어 또는 영어 문장을 입력하세요.\n한국어 뜻을 함께 적으면 의도를 반영해 다듬습니다." : "영어 또는 한국어 단어·숙어를 입력하세요.\n번역과 예문을 확인할 수 있습니다.")
+                .font(.system(size: 12)).foregroundStyle(EnglishTheme.muted).lineSpacing(5).multilineTextAlignment(.center).padding(.top, 13)
             VStack(spacing: 9) {
                 if store.mode == .sentence {
-                    example("한국어만 적어도 괜찮아요", text: "좀 쉬고 싶어", symbol: "cup.and.saucer", korean: "")
-                    example("업무 메일도 자신 있게", text: "Please check this file.", symbol: "briefcase", korean: "이 파일을 확인해 줄래요?")
-                    example("의미가 애매하면 함께 확인해요", text: "I’m down.", symbol: "sparkles", korean: "")
+                    example("한국어 → 영어", text: "좀 쉬고 싶어", symbol: "cup.and.saucer", korean: "")
+                    example("업무 메일", text: "Please check this file.", symbol: "briefcase", korean: "이 파일을 확인해 줄래요?")
+                    example("의미 확인", text: "I’m down.", symbol: "sparkles", korean: "")
                 } else {
                     example("뜻과 예문을 함께", text: "serendipity", symbol: "sparkles", korean: "")
                     example("원어민이 쓰는 숙어", text: "on the same page", symbol: "text.bubble", korean: "")
-                    example("한국어로 시작해도 돼요", text: "눈치", symbol: "arrow.left.arrow.right", korean: "")
+                    example("한국어 → 영어", text: "눈치", symbol: "arrow.left.arrow.right", korean: "")
                 }
             }.padding(.top, 26)
 
@@ -199,7 +195,7 @@ struct IntoEnglishView: View {
             }
         } else if let reply = message.reply {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) { companionMark; Text("Into English").font(.caption.weight(.semibold)); Text("YOUR ENGLISH COMPANION").font(.system(size: 7)).tracking(1).foregroundStyle(EnglishTheme.muted) }
+                HStack(spacing: 8) { companionMark; Text("Into English").font(.caption.weight(.semibold)) }
                 ReplyCard(reply: reply, mood: message.mood, saved: store.isSaved(reply), onSave: { store.toggleSave(message) }, onCopy: { copy(reply.text) }, onSpeak: { speak(reply) }, onChoice: { choice in
                     draft.wrappedValue = choice; koreanDraft = ""; submit()
                 }).disabled(store.isSending)
@@ -208,20 +204,21 @@ struct IntoEnglishView: View {
     }
     private var composer: some View {
         VStack(alignment: .leading, spacing: 11) {
-            if store.mode == .sentence && signedIn {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 7) {
-                        Text("어떤 느낌으로?").font(.system(size: 10)).foregroundStyle(EnglishTheme.muted).padding(.trailing, 3)
+            if store.mode == .sentence {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("어떤 느낌으로?").font(.system(size: 11, weight: .semibold)).foregroundStyle(EnglishTheme.ink)
+                    HStack(spacing: 5) {
                         ForEach(WritingMood.allCases) { mood in
                             Button { store.mood = mood } label: {
-                                Label(mood.title, systemImage: mood.symbol).font(.system(size: 10))
-                                    .padding(.horizontal, 10).padding(.vertical, 7)
-                                    .background(store.mood == mood ? EnglishTheme.peach : Color.clear, in: Capsule())
-                                    .foregroundStyle(store.mood == mood ? EnglishTheme.coral : EnglishTheme.muted)
-                            }.buttonStyle(.plain).accessibilityAddTraits(store.mood == mood ? .isSelected : [])
+                                Text(mood.title).font(.system(size: 12, weight: store.mood == mood ? .semibold : .regular))
+                                    .lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity).padding(.vertical, 10)
+                                    .background(store.mood == mood ? EnglishTheme.coral : Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 9))
+                                    .foregroundStyle(store.mood == mood ? Color.white : EnglishTheme.ink)
+                            }.buttonStyle(.plain).accessibilityIdentifier("mood-\(mood.rawValue)")
+                                .accessibilityAddTraits(store.mood == mood ? .isSelected : [])
                         }
                     }
-                }.disabled(busy)
+                }.padding(12).background(EnglishTheme.sage.opacity(0.65), in: RoundedRectangle(cornerRadius: 14)).disabled(busy)
             }
             VStack(alignment: .leading, spacing: 10) {
                 TextField(store.waitingForMeaning ? "어떤 뜻인지 조금 더 알려주세요…" : store.mode == .word ? "궁금한 영어 · 한국어 단어나 숙어…" : "한국어로 하고 싶은 말, 또는 영어 문장…", text: draft, axis: .vertical)
@@ -257,12 +254,13 @@ struct IntoEnglishView: View {
             }
             HStack(spacing: 4) {
                 Circle().fill(signedIn ? Color(red: 0.55, green: 0.65, blue: 0.43) : EnglishTheme.muted).frame(width: 4, height: 4)
-                Text(signedIn ? "Using ChatGPT plan" : "ChatGPT 계정 연결 필요").font(.system(size: 8))
+                Text(signedIn ? "ChatGPT 연결됨" : "ChatGPT 계정 연결 필요").font(.system(size: 8))
                 if signedIn { Text("·"); Text(auth.models.first(where: { $0.slug == auth.selectedModel })?.display_name ?? "모델 확인 중").lineLimit(1) }
                 Spacer()
-                Button("사용량 관리 ↗") { UIApplication.shared.open(URL(string: "https://chatgpt.com/settings/usage")!) }.font(.system(size: 8))
+                Button("사용량") { showUsage = true }.font(.system(size: 8))
             }.font(.system(size: 8)).foregroundStyle(EnglishTheme.muted)
-        }.padding(.horizontal, 20).padding(.top, 13).padding(.bottom, 9).background(EnglishTheme.background)
+        }.padding(.horizontal, 20).padding(.top, 13).padding(.bottom, 9).background(EnglishTheme.background.shadow(color: .black.opacity(0.04), radius: 8, y: -4))
+            .overlay(alignment: .top) { Rectangle().fill(EnglishTheme.line).frame(height: 1) }
     }
     private func submit() {
         guard canSend else { if !signedIn { showSettings = true }; return }
@@ -278,16 +276,15 @@ struct IntoEnglishView: View {
     }
     private func speak(_ reply: LearningReply) {
         let hasKorean = reply.text.range(of: "[가-힣]", options: .regularExpression) != nil
-        speaker.speak(hasKorean ? reply.example?.english ?? reply.text : reply.text)
+        speaker.speak(hasKorean ? reply.example?.english ?? reply.text : reply.text, region: store.region)
     }
     private var savedSheet: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("YOUR LITTLE COLLECTION").font(.system(size: 8, weight: .semibold)).tracking(2).foregroundStyle(EnglishTheme.muted)
-                    Text("다시 꺼내 보고 싶은 표현").font(.title2.weight(.medium)).tracking(-0.9)
+                    Text("저장한 표현").font(.title2.weight(.medium)).tracking(-0.9)
                     if store.archive.saved.isEmpty {
-                        ContentUnavailableView("아직 저장한 표현이 없어요", systemImage: "bookmark", description: Text("답변의 책갈피를 눌러 나만의 표현집을 만들어 보세요."))
+                        ContentUnavailableView("아직 저장한 표현이 없어요", systemImage: "bookmark", description: Text("답변의 책갈피 버튼으로 저장할 수 있습니다."))
                     }
                     ForEach(store.archive.saved) { item in
                         ReplyCard(reply: item.reply, mood: item.mood, saved: true, onSave: { store.removeSaved(item.id) }, onCopy: { copy(item.reply.text) }, onSpeak: { speak(item.reply) }, onChoice: { _ in })
@@ -302,7 +299,7 @@ struct IntoEnglishView: View {
             List {
                 Button { store.newChat(); showHistory = false } label: { Label("새로운 대화", systemImage: "plus") }.disabled(busy)
                 Section("최근 대화") {
-                    if store.chats.isEmpty { Text("오늘의 첫 영어를 시작해 보세요.").font(.footnote).foregroundStyle(EnglishTheme.muted) }
+                    if store.chats.isEmpty { Text("대화 기록이 없습니다.").font(.footnote).foregroundStyle(EnglishTheme.muted) }
                     ForEach(store.chats) { chat in
                         Button { store.open(chat); showHistory = false } label: {
                             HStack(spacing: 12) {
@@ -316,7 +313,7 @@ struct IntoEnglishView: View {
                     }
                 }
             }.scrollContentBackground(.hidden).background(EnglishTheme.background)
-                .navigationTitle("나의 영어 공간").navigationBarTitleDisplayMode(.inline)
+                .navigationTitle("대화 기록").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showHistory = false } } }
         }.tint(EnglishTheme.coral)
     }
@@ -407,10 +404,14 @@ struct ReplyCard: View {
 
 struct AccountSettings: View {
     @ObservedObject var auth: ProbeModel
+    @ObservedObject var store: StudyStore
+    let draft: String
+    let korean: String
     let locked: Bool
     let onSignIn: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDisconnect = false
+    @State private var showAccount = false
     private var version: String { "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""))" }
     var body: some View {
         NavigationStack {
@@ -418,13 +419,21 @@ struct AccountSettings: View {
                 Section("나의 ChatGPT 계정") {
                     if let account = auth.credentials {
                         Label(account.email, systemImage: "person.crop.circle")
-                        Label(account.permitsInference ? "내 ChatGPT 요금제로 사용 중" : "요금제 사용 권한이 없어요", systemImage: account.permitsInference ? "checkmark.seal" : "exclamationmark.circle")
-                            .font(.footnote).foregroundStyle(EnglishTheme.muted)
+                        LabeledContent("요금제", value: "연동 정보에 미제공")
+                        Text("현재 로그인 연동에서는 Plus·Pro 등 플랜 이름을 제공하지 않습니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                        Button("ChatGPT에서 내 플랜 확인") { showAccount = true }
+                        NavigationLink("사용량") { UsageView(store: store) }
+                        Button("이 기기에서 계정 연결 해제", role: .destructive) { confirmDisconnect = true }.disabled(auth.busy || locked)
                     } else { Text("아직 연결된 계정이 없어요.").foregroundStyle(EnglishTheme.muted) }
                     if auth.credentials == nil || auth.credentials?.permitsInference == false {
                         Button("Continue with ChatGPT", action: onSignIn).disabled(auth.busy || locked)
                     }
-                    Link("ChatGPT 사용량 관리 ↗", destination: URL(string: "https://chatgpt.com/settings/usage")!)
+                }
+                Section("영어 설정") {
+                    Picker("영어 지역", selection: $store.region) {
+                        ForEach(EnglishRegion.allCases) { Text($0.title).tag($0) }
+                    }.accessibilityIdentifier("english-region").disabled(locked)
+                    Text("번역·문장 교정·예문에 선택한 지역의 철자와 표현을 적용합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
                 }
                 if auth.credentials?.permitsInference == true {
                     Section("AI 모델") {
@@ -436,28 +445,94 @@ struct AccountSettings: View {
                                 if let subject = auth.credentials?.subject { UserDefaults.standard.set(selected, forKey: "model.\(subject)") }
                             }
                         }
+                        if ReasoningEffort.supports(auth.selectedModel) {
+                            Picker("추론 강도", selection: $store.effort) {
+                                ForEach(ReasoningEffort.allCases) { Text($0.title).tag($0) }
+                            }.disabled(locked)
+                            Text("Light는 low, Medium은 medium, High는 high로 전송합니다. 높은 강도는 응답 시간과 사용량이 늘어날 수 있습니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                        } else {
+                            Text("이 모델은 모델 기본 추론 강도로 요청합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                        }
                         Button("사용 가능한 모델 새로고침") { Task { await auth.loadModels() } }.disabled(auth.busy || locked)
-                        Text("연결된 계정에서 사용 가능한 모델만 표시해요. 요청은 해당 계정의 ChatGPT 사용 한도에 포함됩니다.")
-                            .font(.caption).foregroundStyle(EnglishTheme.muted)
+                        Text("계정이 제공하는 최신 목록을 표시합니다. GPT-5 계열도 목록에 있다면 선택할 수 있습니다. 새 계정의 기본 선택은 GPT-6.1 Sol을 우선합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
                     }
                 }
                 if let error = auth.error { Section { Text(error).font(.footnote).foregroundStyle(.red).textSelection(.enabled) } }
                 Section("Into English") {
                     HStack { Text("버전"); Spacer(); Text(version).foregroundStyle(EnglishTheme.muted) }
-                    Text("대화와 저장한 표현은 이 기기에 보관돼요. AI 요청 시에는 현재 대화에 필요한 내용만 OpenAI로 전송합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
-                    Text("한국어만 → 영어 표현\n영어만 → 문장 교정\n둘 다 → 한국어 의도를 반영").font(.footnote).lineSpacing(6)
-                }
-                if auth.credentials != nil {
-                    Section {
-                        Button("이 기기에서 계정 연결 해제", role: .destructive) { confirmDisconnect = true }.disabled(auth.busy || locked)
-                        Text("대화 기록은 기기에 남으며 같은 계정으로 다시 연결하면 볼 수 있어요. 원격 권한 철회는 ChatGPT 설정에서 할 수 있습니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                    NavigationLink("AI에 보내는 프롬프트") {
+                        PromptView(store: store, model: auth.selectedModel, draft: draft, korean: korean)
                     }
+                    Text("대화와 저장한 표현은 이 기기에 보관됩니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
                 }
             }.scrollContentBackground(.hidden).background(EnglishTheme.background).navigationTitle("설정").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { dismiss() } } }
+                .sheet(isPresented: $showAccount) { LoginBrowser(url: URL(string: "https://chatgpt.com/#settings/Account")!, onDone: { showAccount = false }) }
                 .confirmationDialog("이 기기의 계정 연결을 해제할까요?", isPresented: $confirmDisconnect, titleVisibility: .visible) {
                     Button("연결 해제", role: .destructive) { auth.disconnect() }
-                }
+                } message: { Text("기록은 기기에 남습니다. 원격 권한 철회는 ChatGPT 설정에서 할 수 있습니다.") }
         }.tint(EnglishTheme.coral)
+    }
+}
+
+struct UsageView: View {
+    @ObservedObject var store: StudyStore
+    @State private var showChatGPT = false
+    private var entries: [UsageEntry] { store.archive.usage ?? [] }
+    private var today: [UsageEntry] { entries.filter { Calendar.current.isDateInToday($0.date) } }
+    var body: some View {
+        List {
+            Section("ChatGPT 전체 한도") {
+                LabeledContent("남은 한도", value: "직접 조회 미지원")
+                Text("다른 앱과 공유하는 한도이므로 이 앱의 토큰 수로 남은 비율을 계산할 수 없습니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+                Button("ChatGPT 전체 사용량 확인") { showChatGPT = true }
+                Text("ChatGPT 사용량 화면을 앱 안에서 엽니다. 웹 로그인이 별도로 필요할 수 있습니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+            }
+            Section("이 기기의 Into English · 오늘") { totals(today) }
+            Section("집계 시작 이후 누적") {
+                totals(entries)
+                Text("이번 버전부터 받은 완료 응답을 집계합니다. 실패·중단된 요청이나 다른 기기·앱 사용량은 포함하지 않습니다. 토큰 정보가 없는 응답은 합계에서 제외합니다.").font(.caption).foregroundStyle(EnglishTheme.muted)
+            }
+        }.scrollContentBackground(.hidden).background(EnglishTheme.background)
+            .navigationTitle("사용량").navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showChatGPT) { LoginBrowser(url: URL(string: "https://chatgpt.com/settings/usage")!, onDone: { showChatGPT = false }) }
+    }
+    @ViewBuilder private func totals(_ items: [UsageEntry]) -> some View {
+        LabeledContent("완료 응답", value: "\(items.count)회")
+        LabeledContent("입력 토큰", value: items.compactMap(\.input).reduce(0, +).formatted())
+        LabeledContent("출력 토큰 (추론 포함)", value: items.compactMap(\.output).reduce(0, +).formatted())
+        let missing = items.filter { $0.input == nil || $0.output == nil }.count
+        if missing > 0 { Text("토큰 정보 미제공: \(missing)회").font(.caption).foregroundStyle(EnglishTheme.muted) }
+    }
+}
+
+struct PromptView: View {
+    @ObservedObject var store: StudyStore
+    let model: String
+    let draft: String
+    let korean: String
+    private var preview: RequestSnapshot {
+        let request = store.preview(text: draft, korean: korean)
+        return RequestSnapshot(date: Date(), model: model, instructions: request.instructions, input: request.input, reasoning: store.effort.value(for: model))
+    }
+    var body: some View {
+        List {
+            Section {
+                Text("공통 지침은 instructions에, 입력과 필요한 대화 기록은 input에 담습니다. 사용자 입력 뒤에 별도로 붙이는 문구는 없습니다.")
+                    .font(.footnote)
+            }
+            Section("현재 설정의 공통 지침 · \(store.mode.title)") {
+                Text(preview.instructions).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+            }
+            Section("다음 요청 미리보기 · 현재 입력 포함") {
+                Text(preview.formatted).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+            }
+            if let last = store.archive.lastRequest {
+                Section("최근 전송 요청 · \(last.date.formatted(date: .abbreviated, time: .shortened))") {
+                    Text(last.formatted).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                }
+            }
+        }.scrollContentBackground(.hidden).background(EnglishTheme.background)
+            .navigationTitle("전송 프롬프트").navigationBarTitleDisplayMode(.inline)
     }
 }

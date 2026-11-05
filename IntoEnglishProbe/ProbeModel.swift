@@ -27,7 +27,8 @@ final class ProbeModel: ObservableObject {
     private let listener = LoopbackListener()
     private let api = PlanAPI()
 
-    init() {
+    init(loadSavedAccount: Bool = true) {
+        guard loadSavedAccount, !ProcessInfo.processInfo.arguments.contains("--ui-testing") else { return }
         do {
             credentials = try Vault.read(Credentials.self, key: "account")
             if let credentials {

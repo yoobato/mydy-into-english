@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import IntoEnglishProbe
 
 final class LearningTests: XCTestCase {
@@ -40,7 +41,7 @@ final class LearningTests: XCTestCase {
     }
     @MainActor
     func testSignedOutStoreDoesNotSendOrCreateHistory() async {
-        let auth = ProbeModel()
+        let auth = ProbeModel(loadSavedAccount: false)
         // This test process has its own simulator Keychain; never use an account from a user device.
         auth.credentials = nil
         let store = StudyStore()
@@ -48,4 +49,64 @@ final class LearningTests: XCTestCase {
         XCTAssertTrue(store.chats.isEmpty)
         XCTAssertFalse(store.isSending)
     }
+    func testRegionIsIncludedInEveryModeWithoutChangingUserInput() {
+        for mode in LearningMode.allCases {
+            for region in EnglishRegion.allCases {
+                let request = StudyRequest(mode: mode, mood: .business, history: [StudyMessage(text: "colour", mood: .business)], region: region)
+                XCTAssertTrue(request.instructions.contains(region.instruction))
+                XCTAssertTrue(request.instructions.contains("Current writing mood: business"))
+                XCTAssertTrue(request.input[0]["content"]!.contains("colour"))
+            }
+        }
+    }
+    func testRequestPreviewIsTheExactInferenceBodyAndNeverContainsCredentials() throws {
+        let request = StudyRequest(mode: .sentence, mood: .formal, history: [StudyMessage(text: "안녕하세요", mood: .formal)], region: .uk)
+        let snapshot = RequestSnapshot(date: Date(), model: "gpt-6.1-sol", instructions: request.instructions, input: request.input, reasoning: ReasoningEffort.low.value(for: "gpt-6.1-sol"))
+        let body = try JSONSerialization.jsonObject(with: Data(snapshot.formatted.utf8)) as! [String: Any]
+        XCTAssertEqual(body["instructions"] as? String, request.instructions)
+        XCTAssertEqual(body["input"] as? [[String: String]], request.input)
+        XCTAssertEqual(body["reasoning"] as? [String: String], ["effort": "low"])
+        XCTAssertEqual(body["store"] as? Bool, false)
+        XCTAssertNil(body["Authorization"])
+        XCTAssertNil(ReasoningEffort.automatic.value(for: "gpt-6.1-sol"))
+        XCTAssertNil(ReasoningEffort.high.value(for: "unknown-model"))
+        XCTAssertEqual(ReasoningEffort.medium.value(for: "gpt-6-astra"), "medium")
+    }
+    func testOldArchivesRemainReadableWithoutUsageOrPrompt() throws {
+        let archive = try JSONDecoder().decode(StudyArchive.self, from: Data(#"{"chats":[],"saved":[]}"#.utf8))
+        XCTAssertTrue(archive.chats.isEmpty)
+        XCTAssertNil(archive.usage)
+        XCTAssertNil(archive.lastRequest)
+    }
+    @MainActor
+    func testRelaunchStartsEmptyAndRetainsHistoryUsageAndLastPrompt() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let subject = "synthetic-test-account"
+        let hash = Data(SHA256.hash(data: Data(subject.utf8))).map { String(format: "%02x", $0) }.joined()
+        var chat = StudyChat(mode: .sentence)
+        chat.messages = [StudyMessage(text: "안녕하세요", mood: .casual)]
+        var archive = StudyArchive()
+        archive.chats = [chat]
+        archive.usage = [UsageEntry(id: UUID(), date: Date(), model: "fixture", input: 123, output: 45)]
+        archive.lastRequest = RequestSnapshot(date: Date(), model: "fixture", instructions: "fixture", input: [], reasoning: nil)
+        try JSONEncoder().encode(archive).write(to: directory.appendingPathComponent("\(hash).json"))
+        let first = StudyStore(directory: directory)
+        first.switchAccount(subject)
+        XCTAssertTrue(first.messages.isEmpty)
+        first.open(first.chats[0])
+        XCTAssertEqual(first.messages.first?.text, "안녕하세요")
+        let relaunched = StudyStore(directory: directory)
+        relaunched.switchAccount(subject)
+        XCTAssertTrue(relaunched.messages.isEmpty)
+        XCTAssertEqual(relaunched.chats.count, 1)
+        XCTAssertEqual(relaunched.archive.usage?.first?.input, 123)
+        XCTAssertEqual(relaunched.archive.lastRequest?.instructions, "fixture")
+        relaunched.switchAccount("different-account")
+        XCTAssertTrue(relaunched.chats.isEmpty)
+        XCTAssertNil(relaunched.archive.usage)
+        XCTAssertNil(relaunched.archive.lastRequest)
+    }
+
 }

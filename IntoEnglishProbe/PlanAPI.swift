@@ -181,17 +181,16 @@ final class PlanAPI {
                           input: [["role": "user", "content": "Reply with exactly: Into English is connected."]])
     }
     func respond(_ credential: Credentials, model: String, instructions: String, input: [[String: String]]) async throws -> Completion {
+        try await respond(credential, snapshot: RequestSnapshot(date: Date(), model: model, instructions: instructions, input: input, reasoning: nil))
+    }
+    func respond(_ credential: Credentials, snapshot: RequestSnapshot) async throws -> Completion {
         guard credential.permitsInference else { throw ProbeError("ChatGPT 요금제 사용 권한이 없어요.") }
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": model, "store": false, "stream": true,
-            "instructions": instructions,
-            "input": input
-        ])
+        request.httpBody = try JSONSerialization.data(withJSONObject: snapshot.body)
         let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw ProbeError("HTTP 응답을 확인하지 못했어요.") }
         if !(200..<300).contains(http.statusCode) {
